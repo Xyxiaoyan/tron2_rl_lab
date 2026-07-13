@@ -103,7 +103,7 @@ class CommandsCfg:
         heading_control_stiffness=1.0,
         rel_standing_envs=0.10,
         rel_heading_envs=1.0,
-        debug_vis=True,
+        debug_vis=False,
         resampling_time_range=(10.0, 10.0),
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
             lin_vel_x=(-1.0, 1.0),
