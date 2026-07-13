@@ -80,6 +80,18 @@ def main():
     env_cfg: ManagerBasedRLEnvCfg = parse_env_cfg(
         task_name=args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs
     )
+
+    # ===== 接入训练地形 =====
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../training_terrain")))
+    from tron_camp_training_terrain import TRON_CAMP_TRAINING_TERRAIN_CFG, TRON2_SPAWN_Z
+
+    env_cfg.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
+    # 机器人初始 z 高度（与评测环境一致）
+    env_cfg.events.reset_robot_base.params["pose_range"]["z"] = (TRON2_SPAWN_Z, TRON2_SPAWN_Z)
+    # 增大环境间距，避免地形格子重叠
+    env_cfg.scene.env_spacing = 10.0
+    # ========================
+
     agent_cfg: RslRlPpoAlgorithmMlpCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     if args_cli.max_iterations is not None:
