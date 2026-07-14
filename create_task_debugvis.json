@@ -1,0 +1,21 @@
+{
+  "taskBaseInfo": {
+    "projectId": "PRO_20260713_020",
+    "taskType": "1",
+    "trainType": "1",
+    "taskName": "SF-TRON2A-debug-vis-fix",
+    "taskDescription": "关闭debug_vis后重新测试：100次迭代验证训练流程",
+    "goodsId": "ESKU000004",
+    "imageId": "BJX00000170",
+    "imageVersion": "V000212",
+    "userId": "3969"
+  },
+  "taskCodeInfo": {
+    "codeType": "2",
+    "codeUrl": "[{\"codeUrl\":\"https://github.com/Xyxiaoyan/tron2_rl_lab.git\",\"versionType\":\"1\",\"versionName\":\"main\"}]",
+    "isOpen": "1",
+    "mainCodeUri": "tron2_rl_lab/scripts/rsl_rl/train.py",
+    "hparamsPath": "tron2_rl_lab/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/agents/limx_rsl_rl_ppo_cfg.py",
+    "startScript": "gm-run tron2_rl_lab/scripts/rsl_rl/train.py --task=Isaac-Limx-SF-TRON2A-Blind-Flat-v0 --headless --max_iterations=100 --num_envs=64"
+  }
+}
