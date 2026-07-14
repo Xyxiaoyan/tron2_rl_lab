@@ -33,18 +33,21 @@ import torch.nn as nn
 import torch.optim as optim
 
 from ..modules import ActorCritic, MLP_Encoder
+from ..modules.sensor_encoder import SensorEncoder
 from ..storage import RolloutStorage
 
 
 class PPO:
     actor_critic: ActorCritic
     encoder: MLP_Encoder
+    sensor_encoder: SensorEncoder
 
     def __init__(
         self,
         num_group,
         encoder,
         actor_critic,
+        sensor_encoder=None,
         num_learning_epochs=1,
         num_mini_batches=1,
         clip_param=0.2,
@@ -81,6 +84,9 @@ class PPO:
         # PPO components
         self.actor_critic = actor_critic
         self.actor_critic.to(self.device)
+        self.sensor_encoder = sensor_encoder
+        if self.sensor_encoder is not None:
+            self.sensor_encoder.to(self.device)
         self.storage = None  # initialized later
         self.optimizer = optim.Adam([{"params": self.actor_critic.parameters()}], lr=learning_rate)
 
@@ -90,6 +96,14 @@ class PPO:
             )
         else:
             self.extra_optimizer = None
+
+        # Add sensor_encoder params to extra_optimizer
+        if self.sensor_encoder is not None and self.sensor_encoder.total_latent_dim != 0:
+            sensor_params = list(self.sensor_encoder.parameters())
+            if self.extra_optimizer is not None:
+                self.extra_optimizer.add_param_group({"params": sensor_params})
+            else:
+                self.extra_optimizer = optim.Adam(sensor_params, lr=est_learning_rate)
         self.transition = RolloutStorage.Transition()
 
         # PPO parameters
@@ -112,6 +126,7 @@ class PPO:
         obs_history_shape,
         commands_shape,
         action_shape,
+        sensor_latent_shape=None,
     ):
         self.storage = RolloutStorage(
             num_envs,
@@ -121,6 +136,7 @@ class PPO:
             obs_history_shape,
             commands_shape,
             action_shape,
+            sensor_latent_shape,
             self.device,
         )
 
@@ -130,12 +146,16 @@ class PPO:
     def train_mode(self):
         self.actor_critic.train()
 
-    def act(self, obs, obs_history, commands, critic_obs):
+    def act(self, obs, obs_history, commands, critic_obs, sensor_latent=None):
         critic_obs = torch.cat((critic_obs, commands), dim=-1)
         # act
         encoder_out = self.encoder.encode(obs_history)
+        actor_inputs = [encoder_out]
+        if sensor_latent is not None:
+            actor_inputs.append(sensor_latent)
+        actor_inputs.extend([obs, commands])
         self.transition.actions = self.actor_critic.act(
-            torch.cat((encoder_out, obs, commands), dim=-1)
+            torch.cat(actor_inputs, dim=-1)
         ).detach()
 
         # evaluate
@@ -154,6 +174,7 @@ class PPO:
         self.transition.critic_obs = critic_obs
         self.transition.observation_history = obs_history
         self.transition.commands = commands
+        self.transition.sensor_latent = sensor_latent
         return self.transition.actions
 
     def process_env_step(self, rewards, dones, infos, next_obs=None):
@@ -192,6 +213,7 @@ class PPO:
             critic_obs_batch,
             obs_history_batch, _,
             group_commands_batch,
+            group_sensor_latent_batch,
             actions_batch,
             target_values_batch,
             advantages_batch,
@@ -202,11 +224,12 @@ class PPO:
         ) in generator:
             encoder_out_batch = self.encoder.encode(obs_history_batch)
             commands_batch = group_commands_batch
+            actor_inputs = [encoder_out_batch]
+            if group_sensor_latent_batch is not None:
+                actor_inputs.append(group_sensor_latent_batch)
+            actor_inputs.extend([obs_batch, commands_batch])
             self.actor_critic.act(
-                torch.cat(
-                    (encoder_out_batch, obs_batch, commands_batch),
-                    dim=-1,
-                )
+                torch.cat(actor_inputs, dim=-1)
             )
 
             actions_log_prob_batch = self.actor_critic.get_actions_log_prob(

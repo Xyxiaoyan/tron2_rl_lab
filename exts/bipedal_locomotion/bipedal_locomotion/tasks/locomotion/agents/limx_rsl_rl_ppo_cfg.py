@@ -42,6 +42,18 @@ class SF_TRON2AFlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         activation = "elu",
         orthogonal_init = False,
     )
+    sensor_encoder = dict(
+        image_h=24,
+        image_w=32,
+        image_c=4,
+        image_ch=4,
+        image_latent_dim=64,
+        lidar_rows=24,
+        lidar_cols=72,
+        lidar_latent_dim=32,
+        activation="elu",
+        orthogonal_init=False,
+    )
 
 #-----------------------------------------------------------------
 @configclass

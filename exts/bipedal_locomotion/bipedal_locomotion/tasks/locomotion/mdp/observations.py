@@ -181,21 +181,73 @@ def joint_pos_rel_exclude_wheel(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCf
 
 # ---- 评测传感器观测函数 ----
 
-def camera_rgb(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg = SceneEntityCfg("head_camera")) -> torch.Tensor:
-    """RGB image from a TiledCamera sensor. Returns (N, H, W, 3) uint8."""
-    sensor: TiledCamera = env.scene.sensors[sensor_cfg.name]
-    return sensor.data.output["rgb"].clone()
+def sensor_image_bundle(
+    env: ManagerBasedEnv,
+    head_sensor_cfg: SceneEntityCfg = SceneEntityCfg("head_camera"),
+    down_sensor_cfg: SceneEntityCfg = SceneEntityCfg("down_camera"),
+) -> torch.Tensor:
+    """Bundled downsampled images for sensor encoder input.
+
+    Returns a flat tensor combining head-RGB, head-depth, down-RGB, down-depth,
+    each downsampled to a fixed resolution. The SensorEncoder will reshape internally.
+
+    Returns:
+        (N, D) flat tensor where D = 4 * (3+1) * H * W
+    """
+    import torch.nn.functional as F
+
+    RESIZE_H, RESIZE_W = 24, 32  # small spatial for manageability
+    imgs = []
+    for sensor_cfg in (head_sensor_cfg, down_sensor_cfg):
+        camera: TiledCamera = env.scene.sensors[sensor_cfg.name]
+        rgb = camera.data.output["rgb"].clone()  # (N, H, W, 3)
+        depth = camera.data.output["distance_to_image_plane"].clone().unsqueeze(-1)  # (N, H, W, 1)
+        depth[torch.isinf(depth)] = 0.0
+
+        # downsample: (N, H, W, C) → (N, C, H, W) → interpolate → (N, C, h, w) → flatten
+        rgb = rgb.permute(0, 3, 1, 2).float() / 255.0
+        depth = depth.permute(0, 3, 1, 2).float() / 10.0  # normalize depth to ~[0,1]
+
+        rgb_small = F.interpolate(rgb, size=(RESIZE_H, RESIZE_W), mode="bilinear", align_corners=False)
+        depth_small = F.interpolate(depth, size=(RESIZE_H, RESIZE_W), mode="bilinear", align_corners=False)
+
+        imgs.append(rgb_small.flatten(start_dim=1))   # (N, 3*24*32)
+        imgs.append(depth_small.flatten(start_dim=1))  # (N, 1*24*32)
+
+    return torch.cat(imgs, dim=-1)  # (N, 4 * 4 * 24 * 32)
 
 
-def camera_depth(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg = SceneEntityCfg("head_camera")) -> torch.Tensor:
-    """Depth image from a TiledCamera sensor. Returns (N, H, W, 1) float32 in meters; inf→0."""
-    sensor: TiledCamera = env.scene.sensors[sensor_cfg.name]
-    depth = sensor.data.output["distance_to_image_plane"].clone().unsqueeze(-1)
-    depth[torch.isinf(depth)] = 0.0
-    return depth
+def sensor_lidar_bundle(
+    env: ManagerBasedEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("lidar"),
+    target_rows: int = 24,
+    target_cols: int = 72,
+) -> torch.Tensor:
+    """Downsampled LiDAR range data for sensor encoder input.
 
+    Uses average-pooling over the (channels × rays) grid to reduce dimensionality.
 
-def lidar_extero(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg = SceneEntityCfg("lidar")) -> torch.Tensor:
-    """Flattened LiDAR height scan from a RayCaster sensor. Returns (N, channels*horizontal_res)."""
+    Args:
+        target_rows: Downsampled vertical channels.
+        target_cols: Downsampled horizontal resolution.
+
+    Returns:
+        (N, target_rows * target_cols) flat tensor.
+    """
     sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
-    return sensor.data.ray_hits_w.clone().view(sensor.data.ray_hits_w.shape[0], -1)
+    n_envs = sensor.data.ray_hits_w.shape[0]
+
+    # ray_hits_w: (N, num_rays, 3) = (N, 96*360, 3) → take z (height)
+    z_hits = sensor.data.ray_hits_w[..., 2].clone()  # (N, 96*360)
+
+    # Reshape to (N, 96, 360) and downsample
+    z_hits = z_hits.view(n_envs, 96, 360)
+    z_hits = z_hits.view(n_envs, target_rows, 96 // target_rows, target_cols, 360 // target_cols)
+    z_hits = z_hits.mean(dim=(2, 4))  # (N, target_rows, target_cols)
+    # Normalize by max_range
+    z_hits = z_hits / 30.0  # max_distance
+    z_hits = z_hits.clamp(-1.0, 1.0)
+    return z_hits.flatten(start_dim=1)  # (N, target_rows * target_cols)
+
+
+# ---- 原有评测传感器观测函数（保留用于调试） ----

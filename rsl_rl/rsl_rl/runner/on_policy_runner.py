@@ -40,6 +40,7 @@ import numpy as np
 
 from ..algorithm import PPO
 from ..modules import MLP_Encoder, ActorCritic
+from ..modules.sensor_encoder import SensorEncoder, DummySensorEncoder
 from ..env import VecEnv
 
 
@@ -50,6 +51,7 @@ class OnPolicyRunner:
         self.ecd_cfg = train_cfg["encoder"]
         self.alg_cfg = train_cfg["algorithm"]
         self.policy_cfg = train_cfg["policy"]
+        self.sensor_ecd_cfg = train_cfg.get("sensor_encoder", None)
         self.device = device
         self.env = env
         obs_dict = self.env.get_observations()
@@ -63,15 +65,31 @@ class OnPolicyRunner:
         privileged_input_size = num_critic_obs
         self.ecd_cfg["num_input_dim"] = self.obs_history_len * self.num_obs
 
+        # --- Sensor Encoder ---
+        sensor_ecd_cfg = train_cfg.get("sensor_encoder", None)
+        has_sensor = "sensor" in obs_dict and sensor_ecd_cfg is not None
+        if has_sensor:
+            sensor_ecd_cfg = dict(sensor_ecd_cfg)  # copy since we may pop
+            sensor_encoder = SensorEncoder(**sensor_ecd_cfg).to(self.device)
+            self.sensor_latent_dim = sensor_encoder.total_latent_dim
+        else:
+            sensor_encoder = DummySensorEncoder().to(self.device)
+            self.sensor_latent_dim = 0
+        # ----------------------------------
+
         encoder = eval("MLP_Encoder")(
             **self.ecd_cfg,
         ).to(self.device)
 
         actor_critic_class = eval("ActorCritic")  # ActorCritic
-        actor_critic: ActorCritic = actor_critic_class(
+        num_actor_obs = (
             self.num_obs
             + encoder.num_output_dim
-            + self.num_commands,
+            + self.num_commands
+            + self.sensor_latent_dim
+        )
+        actor_critic: ActorCritic = actor_critic_class(
+            num_actor_obs,
             num_critic_obs,
             self.env.num_actions,
             **self.policy_cfg,
@@ -82,6 +100,7 @@ class OnPolicyRunner:
             self.env.num_envs,
             encoder,
             actor_critic,
+            sensor_encoder=sensor_encoder if has_sensor else None,
             device = self.device,
             **self.alg_cfg,
         )
@@ -98,6 +117,7 @@ class OnPolicyRunner:
             [self.obs_history_len * self.num_obs],
             [self.num_commands],
             [self.env.num_actions],
+            [self.sensor_latent_dim] if self.sensor_latent_dim > 0 else [1],
         )
 
         self.obs_mean = torch.tensor(
@@ -147,7 +167,22 @@ class OnPolicyRunner:
         obs_history = obs_dict.get("obsHistory")
         obs_history = obs_history.flatten(start_dim=1)
         critic_obs = obs_dict.get("critic")
-        commands = obs_dict.get("commands") 
+        commands = obs_dict.get("commands")
+
+        # --- Encode sensor observations ---
+        has_sensor = (self.sensor_latent_dim > 0) and ("sensor" in obs_dict)
+        sensor_latent = None
+        if has_sensor:
+            sensor_obs = obs_dict["sensor"]
+            # sensor_obs is a dict {"image_bundle": ..., "lidar_bundle": ...}
+            sensor_img = sensor_obs["image_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, :3072]
+            sensor_lid = sensor_obs["lidar_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, 3072:]
+            with torch.inference_mode():
+                sensor_latent = self.alg.sensor_encoder.encode(
+                    sensor_img.to(self.device),
+                    sensor_lid.to(self.device),
+                )
+        # -----------------------------------
 
         obs, obs_history, commands, critic_obs = (
             obs.to(self.device),
@@ -174,7 +209,10 @@ class OnPolicyRunner:
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
-                    actions = self.alg.act(obs, obs_history, commands, critic_obs)
+                    actions = self.alg.act(
+                        obs, obs_history, commands, critic_obs,
+                        sensor_latent=sensor_latent,
+                    )
                     # add critic_obs_buf to step returns, make sure it updates in every for loop
                     (obs_dict, rewards, dones, infos) = self.env.step(actions)
                     obs = obs_dict["policy"]
@@ -182,6 +220,17 @@ class OnPolicyRunner:
                     critic_obs = obs_dict["critic"]
                     obs_history = obs_dict["obsHistory"].flatten(start_dim=1)
                     commands = obs_dict["commands"]
+
+                    # --- Re-encode sensor ---
+                    if has_sensor:
+                        sensor_obs = obs_dict["sensor"]
+                        sensor_img = sensor_obs["image_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, :3072]
+                        sensor_lid = sensor_obs["lidar_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, 3072:]
+                        sensor_latent = self.alg.sensor_encoder.encode(
+                            sensor_img.to(self.device),
+                            sensor_lid.to(self.device),
+                        )
+                    # ------------------------
 
                     # critic_obs = obs
                     obs, obs_history, commands, critic_obs, rewards, dones = (

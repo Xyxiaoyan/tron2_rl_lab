@@ -343,48 +343,29 @@ class ObservarionsCfg:
         velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
 
     @configclass
-    class ExteroCfg(ObsGroup):
-        """评测传感器观测组（LiDAR extero + 相机）"""
-        # LiDAR 高度扫描（展平 96×360=34560 维）
-        extero = ObsTerm(
-            func=mdp.lidar_extero,
+    class SensorCfg(ObsGroup):
+        """传感器观测组（图像+LiDAR）— 将由 SensorEncoder 编码为特征向量"""
+        image_bundle = ObsTerm(
+            func=mdp.sensor_image_bundle,
+            params={
+                "head_sensor_cfg": SceneEntityCfg("head_camera"),
+                "down_sensor_cfg": SceneEntityCfg("down_camera"),
+            },
+        )
+        lidar_bundle = ObsTerm(
+            func=mdp.sensor_lidar_bundle,
             params={"sensor_cfg": SceneEntityCfg("lidar")},
         )
 
         def __post_init__(self):
             self.enable_corruption = False
-            self.concatenate_terms = True
-
-    @configclass
-    class ImageCfg(ObsGroup):
-        """评测相机图像观测组"""
-        head_rgb = ObsTerm(
-            func=mdp.camera_rgb,
-            params={"sensor_cfg": SceneEntityCfg("head_camera")},
-        )
-        head_depth = ObsTerm(
-            func=mdp.camera_depth,
-            params={"sensor_cfg": SceneEntityCfg("head_camera")},
-        )
-        down_rgb = ObsTerm(
-            func=mdp.camera_rgb,
-            params={"sensor_cfg": SceneEntityCfg("down_camera")},
-        )
-        down_depth = ObsTerm(
-            func=mdp.camera_depth,
-            params={"sensor_cfg": SceneEntityCfg("down_camera")},
-        )
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True
+            self.concatenate_terms = False  # keep separate for encoder
 
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
     commands: CommandsObsCfg = CommandsObsCfg()
     obsHistory: HistoryObsCfg = HistoryObsCfg()
-    extero: ExteroCfg = ExteroCfg()
-    image: ImageCfg = ImageCfg()
+    sensor: SensorCfg = SensorCfg()
 
 
 @configclass

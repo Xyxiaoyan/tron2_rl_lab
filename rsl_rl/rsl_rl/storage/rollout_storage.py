@@ -39,6 +39,7 @@ class RolloutStorage:
             self.critic_obs = None
             self.observation_history = None
             self.commands = None
+            self.sensor_latent = None
             self.actions = None
             self.rewards = None
             self.dones = None
@@ -60,6 +61,7 @@ class RolloutStorage:
         obs_history_shape,
         commands_shape,
         actions_shape,
+        sensor_latent_shape=None,
         device="cpu",
     ):
         self.device = device
@@ -89,6 +91,12 @@ class RolloutStorage:
         self.commands = torch.zeros(
             num_transitions_per_env, num_envs, *commands_shape, device=self.device
         )
+        if sensor_latent_shape is not None and sensor_latent_shape[0] > 0:
+            self.sensor_latent = torch.zeros(
+                num_transitions_per_env, num_envs, *sensor_latent_shape, device=self.device
+            )
+        else:
+            self.sensor_latent = None
         self.rewards = torch.zeros(
             num_transitions_per_env, num_envs, 1, device=self.device
         )
@@ -137,6 +145,8 @@ class RolloutStorage:
             self.critic_obs[self.step].copy_(transition.critic_obs)
         self.observation_history[self.step].copy_(transition.observation_history)
         self.commands[self.step].copy_(transition.commands)
+        if self.sensor_latent is not None and transition.sensor_latent is not None:
+            self.sensor_latent[self.step].copy_(transition.sensor_latent)
         self.actions[self.step].copy_(transition.actions)
         self.rewards[self.step].copy_(transition.rewards.view(-1, 1))
         self.dones[self.step].copy_(transition.dones.view(-1, 1))
@@ -239,6 +249,11 @@ class RolloutStorage:
         group_obs_history = self.observation_history[:, group_group_idx, :].flatten(0, 1)
 
         group_commands = self.commands[:, group_group_idx, :].flatten(0, 1)
+        group_sensor_latent = (
+            self.sensor_latent[:, group_group_idx, :].flatten(0, 1)
+            if self.sensor_latent is not None
+            else None
+        )
         group_actions = self.actions[:, group_group_idx, :].flatten(0, 1)
         group_values = self.values[:, group_group_idx, :].flatten(0, 1)
         group_returns = self.returns[:, group_group_idx, :].flatten(0, 1)
@@ -263,6 +278,11 @@ class RolloutStorage:
                 obs_history_batch = group_obs_history_batch
 
                 group_commands_batch = group_commands[group_batch_idx]
+                group_sensor_latent_batch = (
+                    group_sensor_latent[group_batch_idx]
+                    if group_sensor_latent is not None
+                    else None
+                )
                 group_actions_batch = group_actions[group_batch_idx]
                 actions_batch = group_actions_batch
 
@@ -284,7 +304,7 @@ class RolloutStorage:
                 group_old_sigma_batch = group_old_sigma[group_batch_idx]
                 old_sigma_batch = group_old_sigma_batch
 
-                yield obs_batch, critic_obs_batch, obs_history_batch, group_obs_history_batch, group_commands_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, old_mu_batch, old_sigma_batch,
+                yield obs_batch, critic_obs_batch, obs_history_batch, group_obs_history_batch, group_commands_batch, group_sensor_latent_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, old_mu_batch, old_sigma_batch,
 
     def encoder_mini_batch_generator(self, num_mini_batches, num_epochs=8):
         batch_size = self.num_envs * self.num_transitions_per_env
