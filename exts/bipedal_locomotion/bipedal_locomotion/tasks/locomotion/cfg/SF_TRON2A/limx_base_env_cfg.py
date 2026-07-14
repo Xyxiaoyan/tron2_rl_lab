@@ -78,9 +78,9 @@ class SF_TRON2A_SceneCfg(InteractiveSceneCfg):
     )
 
     # ---- 评测传感器（TronCamp Task C） ----
-    # 前视 D435i RGB-D（挂载在 base_imu 上）
+    # 前视 D435i RGB-D（挂载在 limx_imu 上）
     head_camera = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/base_imu/head_camera",
+        prim_path="{ENV_REGEX_NS}/Robot/limx_imu/head_camera",
         offset=TiledCameraCfg.OffsetCfg(pos=(0.22033, 0.01750, 0.18592), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
         data_types=["rgb", "distance_to_image_plane"],
         spawn=sim_utils.PinholeCameraCfg(
@@ -108,9 +108,9 @@ class SF_TRON2A_SceneCfg(InteractiveSceneCfg):
         update_period=0.1,
     )
 
-    # Fairy96 LiDAR（96通道 × 360水平分辨率，挂载在 base_imu 上）
+    # Fairy96 LiDAR（96通道 × 360水平分辨率，挂载在 limx_imu 上）
     lidar = RayCasterCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/base_imu/lidar",
+        prim_path="{ENV_REGEX_NS}/Robot/limx_imu/lidar",
         mesh_prim_paths=["/World/ground"],
         offset=RayCasterCfg.OffsetCfg(pos=(0.18058, 0.0, 0.23876)),
         attach_yaw_only=True,
