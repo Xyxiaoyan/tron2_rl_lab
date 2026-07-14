@@ -11,8 +11,9 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
+from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, CameraCfg, TiledCameraCfg, patterns
 from isaaclab.sim import DomeLightCfg, MdlFileCfg, RigidBodyMaterialCfg
+import isaaclab.sim as sim_utils
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -74,6 +75,52 @@ class SF_TRON2A_SceneCfg(InteractiveSceneCfg):
         history_length=4,
         track_air_time=True,
         update_period=0.0,
+    )
+
+    # ---- 评测传感器（TronCamp Task C） ----
+    # 前视 D435i RGB-D（挂载在 base_imu 上）
+    head_camera = TiledCameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base_imu/head_camera",
+        offset=TiledCameraCfg.OffsetCfg(pos=(0.22033, 0.01750, 0.18592), rot=(1.0, 0.0, 0.0, 0.0), convention="world"),
+        data_types=["rgb", "distance_to_image_plane"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=11.04,
+            horizontal_aperture=20.955,
+            clipping_range=(0.1, 10.0),
+        ),
+        width=640,
+        height=480,
+        update_period=0.1,
+    )
+
+    # 下视 D435i RGB-D（挂载在 d435_Link 上）
+    down_camera = TiledCameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/d435_Link/down_camera",
+        offset=TiledCameraCfg.OffsetCfg(pos=(0.09680, 0.01759, -0.00409), rot=(0.2079, 0.0, 0.9781, 0.0), convention="world"),
+        data_types=["rgb", "distance_to_image_plane"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=11.04,
+            horizontal_aperture=20.955,
+            clipping_range=(0.1, 10.0),
+        ),
+        width=640,
+        height=480,
+        update_period=0.1,
+    )
+
+    # Fairy96 LiDAR（96通道 × 360水平分辨率，挂载在 base_imu 上）
+    lidar = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base_imu/lidar",
+        offset=RayCasterCfg.OffsetCfg(pos=(0.18058, 0.0, 0.23876)),
+        attach_yaw_only=True,
+        pattern_cfg=patterns.LidarPatternCfg(
+            channels=96,
+            vertical_fov_range=(-16.0, 16.0),
+            horizontal_fov_range=(-180.0, 180.0),
+            horizontal_res=1.0,
+        ),
+        max_distance=30.0,
+        update_period=0.1,
     )
 
 
@@ -295,10 +342,49 @@ class ObservarionsCfg:
     class CommandsObsCfg(ObsGroup):
         velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
 
+    @configclass
+    class ExteroCfg(ObsGroup):
+        """评测传感器观测组（LiDAR extero + 相机）"""
+        # LiDAR 高度扫描（展平 96×360=34560 维）
+        extero = ObsTerm(
+            func=mdp.lidar_extero,
+            params={"sensor_cfg": SceneEntityCfg("lidar")},
+        )
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
+    @configclass
+    class ImageCfg(ObsGroup):
+        """评测相机图像观测组"""
+        head_rgb = ObsTerm(
+            func=mdp.camera_rgb,
+            params={"sensor_cfg": SceneEntityCfg("head_camera")},
+        )
+        head_depth = ObsTerm(
+            func=mdp.camera_depth,
+            params={"sensor_cfg": SceneEntityCfg("head_camera")},
+        )
+        down_rgb = ObsTerm(
+            func=mdp.camera_rgb,
+            params={"sensor_cfg": SceneEntityCfg("down_camera")},
+        )
+        down_depth = ObsTerm(
+            func=mdp.camera_depth,
+            params={"sensor_cfg": SceneEntityCfg("down_camera")},
+        )
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
     commands: CommandsObsCfg = CommandsObsCfg()
     obsHistory: HistoryObsCfg = HistoryObsCfg()
+    extero: ExteroCfg = ExteroCfg()
+    image: ImageCfg = ImageCfg()
 
 
 @configclass
@@ -652,3 +738,10 @@ class SF_TRON2A_EnvCfg(ManagerBasedRLEnvCfg):
             self.scene.height_scanner.update_period = self.decimation * self.sim.dt
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
+        # 评测传感器更新周期（与评测环境一致：0.1s）
+        if hasattr(self.scene, "head_camera") and self.scene.head_camera is not None:
+            self.scene.head_camera.update_period = 0.1
+        if hasattr(self.scene, "down_camera") and self.scene.down_camera is not None:
+            self.scene.down_camera.update_period = 0.1
+        if hasattr(self.scene, "lidar") and self.scene.lidar is not None:
+            self.scene.lidar.update_period = 0.1
