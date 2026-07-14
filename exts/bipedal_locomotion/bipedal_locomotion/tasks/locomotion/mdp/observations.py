@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.sensors import ContactSensor
+from isaaclab.sensors import ContactSensor, Camera, TiledCamera, RayCaster
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
@@ -177,3 +177,25 @@ def joint_pos_rel_exclude_wheel(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCf
     all_joints_idx = range(asset.num_joints)
     pos_idx_exclude_wheel = [i for i in all_joints_idx if i not in wheel_joints_idx]
     return asset.data.joint_pos[:, pos_idx_exclude_wheel] - asset.data.default_joint_pos[:, pos_idx_exclude_wheel]
+
+
+# ---- 评测传感器观测函数 ----
+
+def camera_rgb(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg = SceneEntityCfg("head_camera")) -> torch.Tensor:
+    """RGB image from a TiledCamera sensor. Returns (N, H, W, 3) uint8."""
+    sensor: TiledCamera = env.scene.sensors[sensor_cfg.name]
+    return sensor.data.output["rgb"].clone()
+
+
+def camera_depth(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg = SceneEntityCfg("head_camera")) -> torch.Tensor:
+    """Depth image from a TiledCamera sensor. Returns (N, H, W, 1) float32 in meters; inf→0."""
+    sensor: TiledCamera = env.scene.sensors[sensor_cfg.name]
+    depth = sensor.data.output["distance_to_image_plane"].clone().unsqueeze(-1)
+    depth[torch.isinf(depth)] = 0.0
+    return depth
+
+
+def lidar_extero(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg = SceneEntityCfg("lidar")) -> torch.Tensor:
+    """Flattened LiDAR height scan from a RayCaster sensor. Returns (N, channels*horizontal_res)."""
+    sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
+    return sensor.data.ray_hits_w.clone().view(sensor.data.ray_hits_w.shape[0], -1)
