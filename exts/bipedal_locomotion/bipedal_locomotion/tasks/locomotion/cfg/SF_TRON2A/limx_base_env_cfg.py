@@ -111,6 +111,7 @@ class SF_TRON2A_SceneCfg(InteractiveSceneCfg):
     # Fairy96 LiDAR（96通道 × 360水平分辨率，挂载在 base_imu 上）
     lidar = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base_imu/lidar",
+        mesh_prim_paths=["/World/ground"],
         offset=RayCasterCfg.OffsetCfg(pos=(0.18058, 0.0, 0.23876)),
         attach_yaw_only=True,
         pattern_cfg=patterns.LidarPatternCfg(
