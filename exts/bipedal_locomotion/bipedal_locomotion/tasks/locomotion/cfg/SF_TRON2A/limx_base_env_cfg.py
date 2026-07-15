@@ -88,8 +88,8 @@ class SF_TRON2A_SceneCfg(InteractiveSceneCfg):
             horizontal_aperture=20.955,
             clipping_range=(0.1, 10.0),
         ),
-        width=640,
-        height=480,
+        width=128,
+        height=96,
         update_period=0.1,
     )
 
@@ -103,8 +103,8 @@ class SF_TRON2A_SceneCfg(InteractiveSceneCfg):
             horizontal_aperture=20.955,
             clipping_range=(0.1, 10.0),
         ),
-        width=640,
-        height=480,
+        width=128,
+        height=96,
         update_period=0.1,
     )
 

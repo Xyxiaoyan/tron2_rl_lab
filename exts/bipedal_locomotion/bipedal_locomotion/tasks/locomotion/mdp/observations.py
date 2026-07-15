@@ -201,7 +201,9 @@ def sensor_image_bundle(
     for sensor_cfg in (head_sensor_cfg, down_sensor_cfg):
         camera: TiledCamera = env.scene.sensors[sensor_cfg.name]
         rgb = camera.data.output["rgb"].clone()  # (N, H, W, 3)
-        depth = camera.data.output["distance_to_image_plane"].clone().unsqueeze(-1)  # (N, H, W, 1)
+        depth = camera.data.output["distance_to_image_plane"].clone()
+        if depth.dim() == 3:
+            depth = depth.unsqueeze(-1)  # (N, H, W) -> (N, H, W, 1)
         depth[torch.isinf(depth)] = 0.0
 
         # downsample: (N, H, W, C) → (N, C, H, W) → interpolate → (N, C, h, w) → flatten
@@ -234,16 +236,27 @@ def sensor_lidar_bundle(
     Returns:
         (N, target_rows * target_cols) flat tensor.
     """
+    import torch.nn.functional as F
+
     sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
     n_envs = sensor.data.ray_hits_w.shape[0]
+    num_rays = sensor.data.ray_hits_w.shape[1]
 
-    # ray_hits_w: (N, num_rays, 3) = (N, 96*360, 3) → take z (height)
-    z_hits = sensor.data.ray_hits_w[..., 2].clone()  # (N, 96*360)
+    # ray_hits_w: (N, num_rays, 3) → take z (height)
+    z_hits = sensor.data.ray_hits_w[..., 2].clone()  # (N, num_rays)
 
-    # Reshape to (N, 96, 360) and downsample
-    z_hits = z_hits.view(n_envs, 96, 360)
-    z_hits = z_hits.view(n_envs, target_rows, 96 // target_rows, target_cols, 360 // target_cols)
-    z_hits = z_hits.mean(dim=(2, 4))  # (N, target_rows, target_cols)
+    # Reshape to (N, channels, horizontal_rays) — compute dynamically
+    channels = 96
+    horz_rays = num_rays // channels
+    # Truncate any remainder rays so reshape succeeds
+    z_hits = z_hits[:, : channels * horz_rays]
+    z_hits = z_hits.view(n_envs, channels, horz_rays)
+
+    # Adaptive average-pool to (target_rows, target_cols) — robust to any horz_rays
+    z_hits = z_hits.unsqueeze(1)  # (N, 1, channels, horz_rays)
+    z_hits = F.adaptive_avg_pool2d(z_hits, (target_rows, target_cols))  # (N, 1, target_rows, target_cols)
+    z_hits = z_hits.squeeze(1)  # (N, target_rows, target_cols)
+
     # Normalize by max_range
     z_hits = z_hits / 30.0  # max_distance
     z_hits = z_hits.clamp(-1.0, 1.0)

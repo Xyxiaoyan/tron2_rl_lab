@@ -174,9 +174,10 @@ class OnPolicyRunner:
         sensor_latent = None
         if has_sensor:
             sensor_obs = obs_dict["sensor"]
-            # sensor_obs is a dict {"image_bundle": ..., "lidar_bundle": ...}
-            sensor_img = sensor_obs["image_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, :6144]
-            sensor_lid = sensor_obs["lidar_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, 6144:]
+            # sensor_obs may be a dict or a TensorDict (both support string-key access)
+            is_mapping = isinstance(sensor_obs, dict) or hasattr(sensor_obs, "keys")
+            sensor_img = sensor_obs["image_bundle"] if is_mapping else sensor_obs[:, :6144]
+            sensor_lid = sensor_obs["lidar_bundle"] if is_mapping else sensor_obs[:, 6144:]
             with torch.inference_mode():
                 sensor_latent = self.alg.sensor_encoder.encode(
                     sensor_img.to(self.device),
@@ -224,8 +225,9 @@ class OnPolicyRunner:
                     # --- Re-encode sensor ---
                     if has_sensor:
                         sensor_obs = obs_dict["sensor"]
-                        sensor_img = sensor_obs["image_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, :6144]
-                        sensor_lid = sensor_obs["lidar_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, 6144:]
+                        is_mapping = isinstance(sensor_obs, dict) or hasattr(sensor_obs, "keys")
+                        sensor_img = sensor_obs["image_bundle"] if is_mapping else sensor_obs[:, :6144]
+                        sensor_lid = sensor_obs["lidar_bundle"] if is_mapping else sensor_obs[:, 6144:]
                         sensor_latent = self.alg.sensor_encoder.encode(
                             sensor_img.to(self.device),
                             sensor_lid.to(self.device),
