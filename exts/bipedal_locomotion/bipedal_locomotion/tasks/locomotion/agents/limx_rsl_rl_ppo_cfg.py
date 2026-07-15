@@ -45,8 +45,8 @@ class SF_TRON2AFlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     sensor_encoder = dict(
         image_h=24,
         image_w=32,
-        image_c=4,
-        image_ch=4,
+        image_c=2,          # 2 cameras (head + down), each with image_ch channels
+        image_ch=4,         # 4 channels per camera (3 rgb + 1 depth)
         image_latent_dim=64,
         lidar_rows=24,
         lidar_cols=72,

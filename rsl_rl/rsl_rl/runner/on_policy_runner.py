@@ -175,8 +175,8 @@ class OnPolicyRunner:
         if has_sensor:
             sensor_obs = obs_dict["sensor"]
             # sensor_obs is a dict {"image_bundle": ..., "lidar_bundle": ...}
-            sensor_img = sensor_obs["image_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, :3072]
-            sensor_lid = sensor_obs["lidar_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, 3072:]
+            sensor_img = sensor_obs["image_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, :6144]
+            sensor_lid = sensor_obs["lidar_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, 6144:]
             with torch.inference_mode():
                 sensor_latent = self.alg.sensor_encoder.encode(
                     sensor_img.to(self.device),
@@ -224,8 +224,8 @@ class OnPolicyRunner:
                     # --- Re-encode sensor ---
                     if has_sensor:
                         sensor_obs = obs_dict["sensor"]
-                        sensor_img = sensor_obs["image_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, :3072]
-                        sensor_lid = sensor_obs["lidar_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, 3072:]
+                        sensor_img = sensor_obs["image_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, :6144]
+                        sensor_lid = sensor_obs["lidar_bundle"] if isinstance(sensor_obs, dict) else sensor_obs[:, 6144:]
                         sensor_latent = self.alg.sensor_encoder.encode(
                             sensor_img.to(self.device),
                             sensor_lid.to(self.device),
@@ -459,6 +459,14 @@ class OnPolicyRunner:
         if device is not None:
             self.alg.encoder.to(device)
         return self.alg.encoder.encode
+
+    def get_inference_sensor_encoder(self, device=None):
+        if self.alg.sensor_encoder is not None and self.sensor_latent_dim > 0:
+            self.alg.sensor_encoder.eval()
+            if device is not None:
+                self.alg.sensor_encoder.to(device)
+            return self.alg.sensor_encoder.encode
+        return None
 
     def get_actor_critic(self, device=None):
         self.alg.actor_critic.eval()  # switch to evaluation mode (dropout for example)

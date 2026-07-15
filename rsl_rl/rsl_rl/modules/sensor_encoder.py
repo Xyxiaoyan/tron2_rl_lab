@@ -16,8 +16,8 @@ from torch.nn import functional as F
 class SensorEncoder(nn.Module):
     """Encodes RGB-D images + LiDAR into compact feature vectors.
 
-    图像输入: (N, 4*4*24*32) = (N, 3072) flat
-     - 4 images (head-rgb, head-depth, down-rgb, down-depth), each 24×32
+    图像输入: (N, C*ch*H*W) = (N, 2*4*24*32) = (N, 6144) flat
+     - 2 cameras (head/down), each with 4 channels (3 rgb + 1 depth), 24×32
     LiDAR输入: (N, 24*72) = (N, 1728) flat
      - 降采样到 24×72
 
@@ -32,8 +32,8 @@ class SensorEncoder(nn.Module):
         self,
         image_h: int = 24,
         image_w: int = 32,
-        image_c: int = 4,   # 4 images per bundle (head-rgb, head-depth, down-rgb, down-depth)
-        image_ch: int = 4,  # channels per image (3 rgb + 1 depth)
+        image_c: int = 2,   # 2 cameras per bundle (head + down)
+        image_ch: int = 4,  # channels per camera (3 rgb + 1 depth)
         image_latent_dim: int = 64,
         lidar_rows: int = 24,
         lidar_cols: int = 72,
@@ -65,7 +65,7 @@ class SensorEncoder(nn.Module):
         # ---- Image CNN ----
         # Reshape flat (N, C*ch*H*W) → (N, C*ch, H, W) then conv
         cnn_layers = []
-        in_ch = image_c * image_ch  # 4*4=16 channels
+        in_ch = image_c * image_ch  # 2*4=8 channels
         cnn_layers.append(nn.Conv2d(in_ch, 32, kernel_size=3, stride=2, padding=1))
         cnn_layers.append(nn.BatchNorm2d(32))
         cnn_layers.append(act)

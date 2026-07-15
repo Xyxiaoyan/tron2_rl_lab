@@ -104,6 +104,7 @@ def main():
     # obtain the trained policy for inference
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
     encoder = ppo_runner.get_inference_encoder(device=env.unwrapped.device)
+    sensor_encoder = ppo_runner.get_inference_sensor_encoder(device=env.unwrapped.device)
 
     # export policy to onnx
     if EXPORT_POLICY:
@@ -129,15 +130,26 @@ def main():
     obs = obs_dict["policy"]
     obs_history = obs_dict.get("obsHistory")
     obs_history = obs_history.flatten(start_dim=1)
-    commands = obs_dict.get("commands") 
- 
+    commands = obs_dict.get("commands")
+    sensor_latent = None
+
     # simulate environment
     while simulation_app.is_running():
         # run everything in inference mode
         with torch.inference_mode():
+            # encode sensor if available
+            if sensor_encoder is not None and "sensor" in obs_dict:
+                sensor_obs = obs_dict["sensor"]
+                sensor_img = sensor_obs["image_bundle"]
+                sensor_lid = sensor_obs["lidar_bundle"]
+                sensor_latent = sensor_encoder(sensor_img, sensor_lid)
             # agent stepping
             est = encoder(obs_history)
-            actions = policy(torch.cat((est, obs, commands), dim=-1).detach())
+            actor_inputs = [est]
+            if sensor_latent is not None:
+                actor_inputs.append(sensor_latent)
+            actor_inputs.extend([obs, commands])
+            actions = policy(torch.cat(actor_inputs, dim=-1).detach())
             # env stepping
             obs_dict, _, _, infos = env.step(actions)
             obs = obs_dict["policy"]

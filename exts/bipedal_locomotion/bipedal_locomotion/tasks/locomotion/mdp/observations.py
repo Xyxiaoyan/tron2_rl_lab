@@ -192,7 +192,7 @@ def sensor_image_bundle(
     each downsampled to a fixed resolution. The SensorEncoder will reshape internally.
 
     Returns:
-        (N, D) flat tensor where D = 4 * (3+1) * H * W
+        (N, D) flat tensor where D = 2 * (3+1) * H * W  (2 cameras × 4 ch × 24 × 32 = 6144)
     """
     import torch.nn.functional as F
 
@@ -211,10 +211,10 @@ def sensor_image_bundle(
         rgb_small = F.interpolate(rgb, size=(RESIZE_H, RESIZE_W), mode="bilinear", align_corners=False)
         depth_small = F.interpolate(depth, size=(RESIZE_H, RESIZE_W), mode="bilinear", align_corners=False)
 
-        imgs.append(rgb_small.flatten(start_dim=1))   # (N, 3*24*32)
-        imgs.append(depth_small.flatten(start_dim=1))  # (N, 1*24*32)
+        imgs.append(rgb_small.flatten(start_dim=1))   # (N, 3 * 24 * 32)
+        imgs.append(depth_small.flatten(start_dim=1))  # (N, 1 * 24 * 32)
 
-    return torch.cat(imgs, dim=-1)  # (N, 4 * 4 * 24 * 32)
+    return torch.cat(imgs, dim=-1)  # (N, 2 * 4 * 24 * 32) = (N, 6144)
 
 
 def sensor_lidar_bundle(
