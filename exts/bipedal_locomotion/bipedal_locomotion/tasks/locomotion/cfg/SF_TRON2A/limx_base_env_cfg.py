@@ -113,7 +113,7 @@ class SF_TRON2A_SceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Robot/base_Link",
         mesh_prim_paths=["/World/ground"],
         offset=RayCasterCfg.OffsetCfg(pos=(0.18058, 0.0, 0.23876)),
-        attach_yaw_only=True,
+        ray_alignment="yaw",
         pattern_cfg=patterns.LidarPatternCfg(
             channels=96,
             vertical_fov_range=(-16.0, 16.0),
