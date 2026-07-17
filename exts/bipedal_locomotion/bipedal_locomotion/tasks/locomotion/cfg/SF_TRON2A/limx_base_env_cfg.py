@@ -132,16 +132,16 @@ class SF_TRON2A_SceneCfg(InteractiveSceneCfg):
 
 @configclass
 class CommandsCfg:
-    """Command terms for the MDP"""
+    """Command terms for the MDP — forward only for Camp terrain crossing."""
 
     gait_command = mdp.UniformGaitCommandCfg(
         resampling_time_range=(10.0, 10.0),
         debug_vis=False,
         ranges=mdp.UniformGaitCommandCfg.Ranges(
-            frequencies=(0.8, 1.0),  # Gait frequency range [Hz]
-            offsets=(0.5, 0.5),  # Phase offset range [0-1]
-            durations=(0.5, 0.5),  # Contact duration range [0-1]
-            swing_height=(0.10, 0.20),
+            frequencies=(0.9, 0.9),       # 固定步频
+            offsets=(0.5, 0.5),
+            durations=(0.5, 0.5),
+            swing_height=(0.12, 0.15),     # 缩小摆动高度范围
         ),
     )
 
@@ -149,15 +149,15 @@ class CommandsCfg:
         asset_name="robot",
         heading_command=True,
         heading_control_stiffness=1.0,
-        rel_standing_envs=0.10,
-        rel_heading_envs=1.0,
+        rel_standing_envs=0.10,           # 10% 原地站立
+        rel_heading_envs=0.0,             # 不需要转向
         debug_vis=False,
         resampling_time_range=(10.0, 10.0),
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-1.0, 1.0),
-            lin_vel_y=(-0.8, 0.8),
-            ang_vel_z=(-1.0, 1.0),
-            heading=(-math.pi, math.pi),
+            lin_vel_x=(0.5, 1.0),         # ← 只往前走，0.5~1.0 m/s
+            lin_vel_y=(0.0, 0.0),         # ← 无横移
+            ang_vel_z=(0.0, 0.0),         # ← 无旋转
+            heading=(0.0, 0.0),           # ← 固定朝前
         ),
     )
 
@@ -470,35 +470,92 @@ class EventsCfg:
 
 @configclass
 class RewardsCfg:
-    """Reward terms for the MDP"""
+    """Reward terms for the MDP — Camp terrain crossing edition."""
 
-    # Reward terms: ---Task
+    # ═══════════════════════════════════════════════
+    # A. 核心穿越任务（正向，最重要）
+    # ═══════════════════════════════════════════════
+
+    # 前进进度 — 不依赖命令，纯物理位移
+    progress = RewTerm(
+        func=mdp.progress_reward,
+        weight=10.0,
+    )
+
+    # 跟踪前向速度命令
     track_lin_vel_x_exp = RewTerm(
         func=mdp.track_lin_vel_x_yaw_frame_exp,
-        weight=1.0,
-        params={"command_name": "base_velocity", "std": math.sqrt(0.30)},
-    )
-    track_lin_vel_y_exp = RewTerm(
-        func=mdp.track_lin_vel_y_yaw_frame_exp,
-        weight=1.0,
-        params={"command_name": "base_velocity", "std": math.sqrt(0.30)},
-    )
-    track_ang_vel_z_exp = RewTerm(
-        func=mdp.track_ang_vel_z_exp,
-        weight=0.8,
+        weight=2.0,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
-    base_height_exp = RewTerm(
-        func=mdp.base_height_exp,
-        weight=0.6,
-        params={"std": math.sqrt(0.005)},
-    )
-    keep_balance = RewTerm(func=mdp.stay_alive, weight=1.0)
 
-    # Reward terms: ---Gait
+    # 横向速度跟踪 — 命令恒为 0，抑制侧向漂移
+    track_lin_vel_y_exp = RewTerm(
+        func=mdp.track_lin_vel_y_yaw_frame_exp,
+        weight=0.5,
+        params={"command_name": "base_velocity", "std": math.sqrt(0.15)},
+    )
+
+    # 存活奖励 — 不倒就能拿分
+    keep_balance = RewTerm(func=mdp.stay_alive, weight=5.0)
+
+    # ═══════════════════════════════════════════════
+    # B. 地形自适应（替换固定姿态/高度惩罚）
+    # ═══════════════════════════════════════════════
+
+    # 地形自适应高度 — 替换原 base_height_exp
+    base_height_adaptive = RewTerm(
+        func=mdp.base_height_adaptive,
+        weight=1.0,
+        params={
+            "std": math.sqrt(0.02),
+            "target_base_height": 0.72,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+        },
+    )
+
+    # 地形感知姿态 — 替换原 flat_orientation_l2，坡度不罚
+    terrain_orientation_penalty = RewTerm(
+        func=mdp.terrain_orientation_penalty,
+        weight=-0.3,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+        },
+    )
+
+    # ═══════════════════════════════════════════════
+    # C. 防绊倒 / 迈步（新增）
+    # ═══════════════════════════════════════════════
+
+    # 摆动足离地高度 — 防绊倒
+    swing_foot_height = RewTerm(
+        func=mdp.swing_foot_clearance,
+        weight=0.5,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+            "asset_cfg": SceneEntityCfg("robot", body_names="ankle_pitch_.*"),
+            "min_height": 0.05,
+            "desired_height": 0.15,
+        },
+    )
+
+    # 接地冲击惩罚 — 软着陆
+    foot_landing_softness = RewTerm(
+        func=mdp.foot_landing_velocity,
+        weight=-0.2,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+            "asset_cfg": SceneEntityCfg("robot", body_names="ankle_pitch_.*"),
+        },
+    )
+
+    # ═══════════════════════════════════════════════
+    # D. 步态（保留，适当加权重）
+    # ═══════════════════════════════════════════════
+
     gait_reward = RewTerm(
         func=mdp.GaitReward,
-        weight=0.5,
+        weight=1.0,
         params={
             "tracking_contacts_shaped_force": 1.0,
             "tracking_contacts_shaped_vel": 1.0,
@@ -515,51 +572,51 @@ class RewardsCfg:
         },
     )
 
-    # Reward terms: ---Base regulation
-    ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.15)
-    lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.5)
+    feet_air_time = RewTerm(
+        func=mdp.feet_air_time_positive_biped,
+        weight=0.1,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+        },
+    )
+
+    # ═══════════════════════════════════════════════
+    # E. 基础姿态控制（保留但大幅降权）
+    # ═══════════════════════════════════════════════
+
+    ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.10)
+    lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.3)
     body_lin_acc = RewTerm(
         func=mdp.body_lin_acc_l2,
-        weight=-0.002,
+        weight=-0.001,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="base_Link"),
         },
     )
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
 
-    # Reward terms: ---Action regulation
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)  # same
+    # 侧向偏移惩罚 — 防止机器人偏离前进轴线
+    lateral_deviation = RewTerm(
+        func=mdp.lateral_deviation_penalty,
+        weight=-0.5,
+    )
+
+    # ═══════════════════════════════════════════════
+    # F. 动作平滑（保留）
+    # ═══════════════════════════════════════════════
+
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
     action_smoothness = RewTerm(func=mdp.ActionSmoothnessPenalty, weight=-0.0004)
 
-    # Reward terms: ---Contact regulation
+    # ═══════════════════════════════════════════════
+    # G. 接触控制
+    # ═══════════════════════════════════════════════
+
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts,
         weight=-1.0,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="(?!ankle_pitch_).*"), "threshold": 10.0},
     )
 
-    # Reward terms: ---Body control
-    feet_distance = RewTerm(
-        func=mdp.distance_aligned,
-        weight=0.4,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="ankle_pitch_.*"),
-            "min_dist": 0.20,
-            "max_dist": 0.60,
-            "desired_dist": 0.40,
-            "std": math.sqrt(0.01),
-            "command_name": "base_velocity",
-            "vy_max": 0.8,
-            "decay_power": 1.0,
-        },
-    )
-    feet_air_time = RewTerm(
-        func=mdp.feet_air_time_positive_biped,
-        weight=0.05,
-        params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
-        },
-    )
     feet_slide = RewTerm(
         func=mdp.feet_slide_penalty,
         weight=-0.05,
@@ -578,10 +635,22 @@ class RewardsCfg:
         },
     )
 
-    # Reward terms: ---Joint regulation
-    dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-4e-7)
-    dof_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-5e-5)
-    dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-5e-7)
+    foot_contact_force = RewTerm(
+        func=mdp.contact_forces,
+        weight=-0.002,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="ankle_pitch_[RL]_Link"),
+        },
+    )
+
+    # ═══════════════════════════════════════════════
+    # H. 关节控制（大幅放宽 — 让机器人有力气跨越障碍）
+    # ═══════════════════════════════════════════════
+
+    dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-2e-7)
+    dof_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-3e-5)
+    dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-3e-7)
     dof_pos_limits = RewTerm(
         func=mdp.joint_pos_limits,
         weight=-0.2,
@@ -599,7 +668,7 @@ class RewardsCfg:
     )
     dof_power_l1 = RewTerm(
         func=mdp.weighted_joint_power_l1,
-        weight=-2.5e-7,
+        weight=-1.0e-7,
         params={
             "power_weight": {
                 "proximal_pitch_L_Joint": 0.01,
@@ -617,7 +686,7 @@ class RewardsCfg:
     )
     joint_deviation_l1 = RewTerm(
         func=mdp.weighted_joint_deviation_l1,
-        weight=-1.0,
+        weight=-0.5,
         params={
             "deviation_weight": {
                 "proximal_pitch_L_Joint": 0.005,
@@ -635,12 +704,12 @@ class RewardsCfg:
     )
     knee_joint_orientation = RewTerm(
         func=mdp.joint_orientation_l1,
-        weight=-1.0,
+        weight=-0.5,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["knee_.*"])},
     )
     foot_joint_orientation = RewTerm(
         func=mdp.joint_orientation_l1_symmetric,
-        weight=-0.1,
+        weight=-0.05,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["ankle_pitch.*"])},
     )
     orientation_exp_knee = RewTerm(
@@ -648,15 +717,7 @@ class RewardsCfg:
         weight=0.1,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="knee_.*"), "target_yaw": math.pi},
     )
-    torques_smoothness_penalty = RewTerm(func=mdp.torques_smoothness_penalty, weight=-1.5e-7)
-    foot_contact_force = RewTerm(
-        func=mdp.contact_forces,
-        weight=-0.002,
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="ankle_pitch_[RL]_Link"),
-        },
-    )
+    torques_smoothness_penalty = RewTerm(func=mdp.torques_smoothness_penalty, weight=-1.0e-7)
 
 
 @configclass

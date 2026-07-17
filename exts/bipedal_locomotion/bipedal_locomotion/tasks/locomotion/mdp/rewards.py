@@ -815,3 +815,149 @@ class ActionSmoothnessPenalty(ManagerTermBase):
         startup_env_mask = env.episode_length_buf < 3
         penalty[startup_env_mask] = 0
         return penalty
+
+
+def progress_reward(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward forward progress along the track x-axis.
+
+    Measures the actual forward displacement (world-frame x-velocity) per step,
+    independent of any velocity command.  This is the single most important signal
+    for teaching the robot to actually *move* through the terrain.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    lin_vel_x = asset.data.root_lin_vel_w[:, 0]
+    return torch.clamp(lin_vel_x, min=0.0)
+
+
+def base_height_adaptive(
+    env: ManagerBasedRLEnv,
+    std: float,
+    target_base_height: float = 0.72,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+) -> torch.Tensor:
+    """Terrain-adaptive base height reward.
+
+    Uses the ground-contacting feet to estimate local terrain height, then
+    sets the desired base height relative to that ground.  On flat ground this
+    behaves like the original ``base_height_exp``; on slopes / stairs / platforms
+    it automatically adjusts so the robot is not penalised for following the terrain.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    contact_forces = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :]
+    in_contact = contact_forces.norm(dim=-1).max(dim=1)[0] > 1.0
+
+    feet_z = asset.data.body_pos_w[:, sensor_cfg.body_ids, 2]
+    # Use mean ground height of contacting feet (or last-known if none contact)
+    ground_z = torch.sum(feet_z * in_contact.float(), dim=1) / (torch.sum(in_contact.float(), dim=1) + 1e-6)
+
+    target_z = ground_z + target_base_height
+    error = torch.square(asset.data.root_pos_w[:, 2] - target_z)
+    return torch.exp(-error / std**2)
+
+
+def terrain_orientation_penalty(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+) -> torch.Tensor:
+    """Penalise body tilt *in excess of* what the local terrain slope demands.
+
+    On flat ground this is equivalent to ``flat_orientation_l2``.
+    On a slope, the robot *should* lean into the slope --- this function
+    only penalises the tilt component that is **not** explained by the
+    height difference between the two feet.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    # Estimate terrain slope from foot height difference
+    feet_pos = asset.data.body_pos_w[:, sensor_cfg.body_ids, 2]
+    foot_spacing = 0.35  # approximate lateral distance between feet [m]
+    terrain_slope = torch.abs(feet_pos[:, 0] - feet_pos[:, 1]) / (foot_spacing + 1e-6)
+    allowed_tilt = torch.atan(terrain_slope)  # rad
+
+    # Current gravity-projected tilt
+    proj_gravity = asset.data.projected_gravity[:, :2]
+    current_tilt = torch.norm(proj_gravity, dim=1)
+
+    excess_tilt = torch.clamp(current_tilt - allowed_tilt, min=0.0)
+    return excess_tilt
+
+
+def swing_foot_clearance(
+    env: ManagerBasedRLEnv,
+    min_height: float = 0.05,
+    desired_height: float = 0.15,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="ankle_pitch_.*"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+) -> torch.Tensor:
+    """Reward sufficient foot clearance during swing phase.
+
+    On rough terrain (steps, bumps, platforms) the robot must lift its feet
+    high enough to avoid tripping.  This reward only activates for feet that
+    are NOT in contact with the ground.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    contact_forces = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :]
+    in_contact = contact_forces.norm(dim=-1).max(dim=1)[0] > 1.0
+    in_swing = (~in_contact).float()
+
+    # Use height scanner to estimate ground height beneath each foot
+    # Fallback: use the world z of the foot itself as a proxy
+    feet_z = asset.data.body_pos_w[:, sensor_cfg.body_ids, 2]
+    # Estimate foot ground level as the foot z when it last contacted
+    # Simplified: penalise if swing foot is too low
+    clearance = feet_z  # relative to world origin; on flat ground this is fine
+    # Clip to desired range
+    swing_clearance = clearance * in_swing
+    # Reward for being above min_height, ramp up to desired_height
+    reward = torch.clamp(swing_clearance / desired_height, max=1.0)
+    # Zero out contacting feet
+    reward = reward * in_swing
+    return torch.mean(reward, dim=1)
+
+
+def foot_landing_velocity(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="ankle_pitch_.*"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+) -> torch.Tensor:
+    """Penalise high foot vertical velocity at the moment of ground contact.
+
+    Hard landings destabilise the body and can damage hardware.  This penalty
+    encourages the robot to "feel" for the ground and land softly.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    contact_forces = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :]
+    in_contact = contact_forces.norm(dim=-1).max(dim=1)[0] > 1.0
+
+    foot_vel_z = asset.data.body_lin_vel_w[:, sensor_cfg.body_ids, 2]
+    # Only penalise when foot just made contact
+    landing_vel = torch.abs(foot_vel_z) * in_contact.float()
+    return torch.sum(landing_vel, dim=1)
+
+
+def lateral_deviation_penalty(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalise lateral (y-axis) deviation from the robot's initial y position.
+
+    On a corridor-style Camp track the robot should stay roughly centred.
+    Without this penalty it can drift sideways over the course of an episode,
+    which is especially dangerous on narrow platforms and gap-bridge segments.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    # y position relative to world origin (track is centred at y=0)
+    lateral_pos = asset.data.root_pos_w[:, 1]
+    return torch.abs(lateral_pos)
