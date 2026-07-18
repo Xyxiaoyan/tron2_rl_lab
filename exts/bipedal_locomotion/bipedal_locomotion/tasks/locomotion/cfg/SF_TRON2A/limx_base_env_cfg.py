@@ -476,16 +476,16 @@ class RewardsCfg:
     # A. 核心穿越任务（正向，最重要）
     # ═══════════════════════════════════════════════
 
-    # 前进进度 — 不依赖命令，纯物理位移
+    # 前进进度 — 不依赖命令，纯物理位移（核心信号）
     progress = RewTerm(
         func=mdp.progress_reward,
-        weight=10.0,
+        weight=50.0,
     )
 
     # 跟踪前向速度命令
     track_lin_vel_x_exp = RewTerm(
         func=mdp.track_lin_vel_x_yaw_frame_exp,
-        weight=2.0,
+        weight=5.0,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
 
@@ -496,8 +496,8 @@ class RewardsCfg:
         params={"command_name": "base_velocity", "std": math.sqrt(0.15)},
     )
 
-    # 存活奖励 — 不倒就能拿分
-    keep_balance = RewTerm(func=mdp.stay_alive, weight=5.0)
+    # 存活奖励 — 活下去是前提但不是目标
+    keep_balance = RewTerm(func=mdp.stay_alive, weight=1.0)
 
     # ═══════════════════════════════════════════════
     # B. 地形自适应（替换固定姿态/高度惩罚）
