@@ -821,15 +821,18 @@ def progress_reward(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Reward forward progress along the track x-axis.
+    """Reward forward progress along the robot's heading direction.
 
-    Measures the actual forward displacement (world-frame x-velocity) per step,
-    independent of any velocity command.  This is the single most important signal
-    for teaching the robot to actually *move* through the terrain.
+    Uses the gravity-aligned yaw frame so that "forward" always means the
+    direction the robot is facing, regardless of its initial yaw on the
+    terrain grid.  This is the single most important signal for teaching
+    the robot to actually *move* through the terrain.
     """
     asset: RigidObject = env.scene[asset_cfg.name]
-    lin_vel_x = asset.data.root_lin_vel_w[:, 0]
-    return torch.clamp(lin_vel_x, min=0.0)
+    # Project world velocity into the robot's yaw-aligned frame
+    vel_yaw = quat_apply_inverse(yaw_quat(asset.data.root_quat_w), asset.data.root_lin_vel_w[:, :3])
+    forward_vel = vel_yaw[:, 0]  # x-component in robot heading frame
+    return torch.clamp(forward_vel, min=0.0)
 
 
 def base_height_adaptive(
