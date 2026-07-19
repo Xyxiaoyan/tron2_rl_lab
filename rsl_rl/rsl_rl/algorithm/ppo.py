@@ -127,6 +127,8 @@ class PPO:
         commands_shape,
         action_shape,
         sensor_latent_shape=None,
+        sensor_image_shape=None,
+        sensor_lidar_shape=None,
     ):
         self.storage = RolloutStorage(
             num_envs,
@@ -137,6 +139,8 @@ class PPO:
             commands_shape,
             action_shape,
             sensor_latent_shape,
+            sensor_image_shape,
+            sensor_lidar_shape,
             self.device,
         )
 
@@ -146,7 +150,7 @@ class PPO:
     def train_mode(self):
         self.actor_critic.train()
 
-    def act(self, obs, obs_history, commands, critic_obs, sensor_latent=None):
+    def act(self, obs, obs_history, commands, critic_obs, sensor_latent=None, sensor_image=None, sensor_lidar=None):
         critic_obs = torch.cat((critic_obs, commands), dim=-1)
         # act
         encoder_out = self.encoder.encode(obs_history)
@@ -175,6 +179,8 @@ class PPO:
         self.transition.observation_history = obs_history
         self.transition.commands = commands
         self.transition.sensor_latent = sensor_latent
+        self.transition.sensor_image = sensor_image
+        self.transition.sensor_lidar = sensor_lidar
         return self.transition.actions
 
     def process_env_step(self, rewards, dones, infos, next_obs=None):
@@ -214,6 +220,8 @@ class PPO:
             obs_history_batch, _,
             group_commands_batch,
             group_sensor_latent_batch,
+            group_sensor_image_batch,
+            group_sensor_lidar_batch,
             actions_batch,
             target_values_batch,
             advantages_batch,
@@ -225,7 +233,11 @@ class PPO:
             encoder_out_batch = self.encoder.encode(obs_history_batch)
             commands_batch = group_commands_batch
             actor_inputs = [encoder_out_batch]
-            if group_sensor_latent_batch is not None:
+            # 重新用 sensor_encoder 编码，让 sensor_encoder 获得梯度
+            if group_sensor_latent_batch is not None and self.sensor_encoder is not None and group_sensor_image_batch is not None:
+                sensor_latent_batch = self.sensor_encoder.encode(group_sensor_image_batch, group_sensor_lidar_batch)
+                actor_inputs.append(sensor_latent_batch)
+            elif group_sensor_latent_batch is not None:
                 actor_inputs.append(group_sensor_latent_batch)
             actor_inputs.extend([obs_batch, commands_batch])
             self.actor_critic.act(

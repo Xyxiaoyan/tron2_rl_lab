@@ -109,6 +109,13 @@ class OnPolicyRunner:
         self.save_interval = self.cfg["save_interval"]
 
         # init storage and model
+        # 计算 sensor 原始观测维度（用于 update 时重新编码）
+        sensor_image_dim = 0
+        sensor_lidar_dim = 0
+        if self.sensor_latent_dim > 0 and self.sensor_ecd_cfg is not None:
+            cfg = self.sensor_ecd_cfg
+            sensor_image_dim = cfg.get("image_c", 2) * cfg.get("image_ch", 4) * cfg.get("image_h", 24) * cfg.get("image_w", 32)
+            sensor_lidar_dim = cfg.get("lidar_rows", 24) * cfg.get("lidar_cols", 72)
         self.alg.init_storage(
             self.env.num_envs,
             self.num_steps_per_env,
@@ -118,6 +125,8 @@ class OnPolicyRunner:
             [self.num_commands],
             [self.env.num_actions],
             [self.sensor_latent_dim] if self.sensor_latent_dim > 0 else [1],
+            [sensor_image_dim] if sensor_image_dim > 0 else None,
+            [sensor_lidar_dim] if sensor_lidar_dim > 0 else None,
         )
 
         self.obs_mean = torch.tensor(
@@ -213,6 +222,8 @@ class OnPolicyRunner:
                     actions = self.alg.act(
                         obs, obs_history, commands, critic_obs,
                         sensor_latent=sensor_latent,
+                        sensor_image=sensor_img if has_sensor else None,
+                        sensor_lidar=sensor_lid if has_sensor else None,
                     )
                     # add critic_obs_buf to step returns, make sure it updates in every for loop
                     (obs_dict, rewards, dones, infos) = self.env.step(actions)

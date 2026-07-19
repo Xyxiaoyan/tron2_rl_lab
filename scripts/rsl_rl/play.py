@@ -24,6 +24,13 @@ parser.add_argument("--num_envs", type=int, default=None, help="Number of enviro
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--checkpoint_path", type=str, default=None, help="Relative path to checkpoint file.")
+parser.add_argument(
+    "--terrain",
+    type=str,
+    default="flat",
+    choices=["flat", "tron_camp", "humanoid_camp"],
+    help="Terrain type for evaluation: flat (default), tron_camp, or humanoid_camp.",
+)
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -65,6 +72,34 @@ def main():
     agent_cfg: RslRlPpoAlgorithmMlpCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
     env_cfg.seed = agent_cfg.seed
+
+    # override terrain if requested (camp terrain evaluation)
+    # 重要：必须与 train.py 中的 camp 地形接入方式完全一致，否则训练/评估分布不匹配
+    if args_cli.terrain != "flat":
+        import sys as _sys
+        _terrain_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../training_terrain"))
+        if _terrain_dir not in _sys.path:
+            _sys.path.insert(0, _terrain_dir)
+        if args_cli.terrain == "tron_camp":
+            from tron_camp_training_terrain import TRON_CAMP_TRAINING_TERRAIN_CFG, TRON2_SPAWN_Z
+            env_cfg.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
+            spawn_z = TRON2_SPAWN_Z
+        elif args_cli.terrain == "humanoid_camp":
+            from humanoid_camp_training_terrain import HUMANOID_CAMP_TRAINING_TERRAIN_CFG, OLI_SPAWN_Z
+            env_cfg.scene.terrain = HUMANOID_CAMP_TRAINING_TERRAIN_CFG
+            spawn_z = OLI_SPAWN_Z
+        # 与 train.py 一致：让 spawn z = TRON2_SPAWN_Z（脚刚好接触地面，不从高空落下）
+        # reset_root_state_uniform: positions = default_root_state + env_origins + rand_samples
+        #   default_root_state.z = init_state.pos.z
+        #   rand_samples.z = pose_range["z"] = TRON2_SPAWN_Z - init_state.pos.z
+        _init_z = env_cfg.scene.robot.init_state.pos[2]
+        _z_offset = spawn_z - _init_z
+        env_cfg.events.reset_robot_base.params["pose_range"]["z"] = (_z_offset, _z_offset)
+        # 增大环境间距，避免地形格子重叠（与 train.py 一致）
+        env_cfg.scene.env_spacing = 10.0
+        print(f"[INFO] Using terrain: {args_cli.terrain} (init_z={_init_z}, z_offset={_z_offset:.4f}, spawn z={spawn_z})")
+    else:
+        print("[INFO] Using terrain: flat")
 
     # specify directory for logging experiments
     if args_cli.checkpoint_path is None:

@@ -86,10 +86,17 @@ def main():
     from tron_camp_training_terrain import TRON_CAMP_TRAINING_TERRAIN_CFG, TRON2_SPAWN_Z
 
     env_cfg.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
-    # 机器人初始 z 高度（与评测环境一致）
-    env_cfg.events.reset_robot_base.params["pose_range"]["z"] = (TRON2_SPAWN_Z, TRON2_SPAWN_Z)
+    # 机器人初始 z 高度：直接放在地面上（脚刚好接触地形），而不是从高空落下
+    # reset_root_state_uniform: positions = default_root_state + env_origins + rand_samples
+    #   default_root_state.z = init_state.pos.z
+    #   rand_samples.z = pose_range["z"]
+    # 要让 spawn z = TRON2_SPAWN_Z (0.966)，需设置 pose_range["z"] = TRON2_SPAWN_Z - init_state.pos.z
+    _init_z = env_cfg.scene.robot.init_state.pos[2]
+    _z_offset = TRON2_SPAWN_Z - _init_z
+    env_cfg.events.reset_robot_base.params["pose_range"]["z"] = (_z_offset, _z_offset)
     # 增大环境间距，避免地形格子重叠
     env_cfg.scene.env_spacing = 10.0
+    print(f"[INFO] Camp terrain: init_state.pos.z={_init_z}, pose_range z offset={_z_offset:.4f}, spawn z={TRON2_SPAWN_Z}")
     # ========================
 
     agent_cfg: RslRlPpoAlgorithmMlpCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)

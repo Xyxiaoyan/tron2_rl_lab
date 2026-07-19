@@ -886,7 +886,7 @@ def terrain_orientation_penalty(
     allowed_tilt = torch.atan(terrain_slope)  # rad
 
     # Current gravity-projected tilt
-    proj_gravity = asset.data.projected_gravity[:, :2]
+    proj_gravity = asset.data.projected_gravity_b[:, :2]
     current_tilt = torch.norm(proj_gravity, dim=1)
 
     excess_tilt = torch.clamp(current_tilt - allowed_tilt, min=0.0)

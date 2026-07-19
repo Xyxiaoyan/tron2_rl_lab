@@ -150,14 +150,14 @@ class CommandsCfg:
         heading_command=True,
         heading_control_stiffness=1.0,
         rel_standing_envs=0.10,           # 10% 原地站立
-        rel_heading_envs=0.0,             # 不需要转向
+        rel_heading_envs=1.0,             # 100% 环境强制跟踪 heading=0 (朝向赛道前方)
         debug_vis=False,
         resampling_time_range=(10.0, 10.0),
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
             lin_vel_x=(0.5, 1.0),         # ← 只往前走，0.5~1.0 m/s
             lin_vel_y=(0.0, 0.0),         # ← 无横移
-            ang_vel_z=(0.0, 0.0),         # ← 无旋转
-            heading=(0.0, 0.0),           # ← 固定朝前
+            ang_vel_z=(-1.0, 1.0),        # ← 允许转向纠正朝向（heading 控制需要）
+            heading=(0.0, 0.0),           # ← 固定朝向赛道前方 (世界 x 方向)
         ),
     )
 
@@ -446,7 +446,7 @@ class EventsCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
+            "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-0.1, 0.1)},
             "velocity_range": {
                 "x": (-0.5, 0.5),
                 "y": (-0.5, 0.5),
