@@ -13,8 +13,9 @@ class SF_TRON2AFlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 500
     experiment_name = "sf_tron_2a_flat"
     empirical_normalization = False
+    clip_actions = 1.0  # 限制 action 在 [-1, 1] 范围内，防止 noise_std 过大导致动作失控
     policy = RslRlPpoActorCriticCfg(
-        init_noise_std=1.0,
+        init_noise_std=0.5,  # 降低初始噪声标准差（之前 1.0 导致 noise_std 持续增长到 4+）
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
@@ -24,7 +25,7 @@ class SF_TRON2AFlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
-        entropy_coef=0.01,
+        entropy_coef=0.005,  # 降低熵系数（之前 0.01 推高 noise_std 持续增长）
         num_learning_epochs=5,
         num_mini_batches=4,
         learning_rate=1.0e-3,
