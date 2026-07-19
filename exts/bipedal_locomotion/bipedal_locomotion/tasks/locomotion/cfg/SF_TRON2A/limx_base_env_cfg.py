@@ -148,7 +148,7 @@ class CommandsCfg:
     base_velocity = mdp.UniformVelocityCommandCfg(
         asset_name="robot",
         heading_command=True,
-        heading_control_stiffness=1.0,
+        heading_control_stiffness=2.0,
         rel_standing_envs=0.10,           # 10% 原地站立
         rel_heading_envs=1.0,             # 100% 环境强制跟踪 heading=0 (朝向赛道前方)
         debug_vis=False,
@@ -156,7 +156,7 @@ class CommandsCfg:
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
             lin_vel_x=(0.5, 1.0),         # ← 只往前走，0.5~1.0 m/s
             lin_vel_y=(0.0, 0.0),         # ← 无横移
-            ang_vel_z=(-1.0, 1.0),        # ← 允许转向纠正朝向（heading 控制需要）
+            ang_vel_z=(-1.5, 1.5),        # ← 允许转向纠正朝向（heading 控制需要）
             heading=(0.0, 0.0),           # ← 固定朝向赛道前方 (世界 x 方向)
         ),
     )
@@ -594,10 +594,10 @@ class RewardsCfg:
         },
     )
 
-    # 侧向偏移惩罚 — 防止机器人偏离前进轴线
+    # 侧向偏移惩罚 — 防止机器人偏离前进轴线（相对 env_origin 的 y 偏移）
     lateral_deviation = RewTerm(
         func=mdp.lateral_deviation_penalty,
-        weight=-0.5,
+        weight=-2.0,
     )
 
     # ═══════════════════════════════════════════════
@@ -735,6 +735,11 @@ class TerminationsCfg:
         params={
             "threshold": 100.0,
         },
+    )
+    # 终止偏离赛道太远的 episode（赛道宽 8m，允许 ±3m 偏移）
+    lateral_deviation_termination = DoneTerm(
+        func=mdp.lateral_deviation_too_large,
+        params={"max_deviation": 3.0},
     )
 
 

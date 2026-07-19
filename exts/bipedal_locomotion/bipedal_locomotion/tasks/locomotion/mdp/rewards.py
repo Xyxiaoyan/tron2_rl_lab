@@ -954,13 +954,16 @@ def lateral_deviation_penalty(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Penalise lateral (y-axis) deviation from the robot's initial y position.
+    """Penalise lateral (y-axis) deviation from the robot's env origin.
 
     On a corridor-style Camp track the robot should stay roughly centred.
     Without this penalty it can drift sideways over the course of an episode,
     which is especially dangerous on narrow platforms and gap-bridge segments.
+
+    Uses the env origin as the reference (not world origin), since each env
+    has a different world position in the terrain grid.
     """
     asset: RigidObject = env.scene[asset_cfg.name]
-    # y position relative to world origin (track is centred at y=0)
-    lateral_pos = asset.data.root_pos_w[:, 1]
+    # y position relative to env origin (track is centred at env_origin.y)
+    lateral_pos = asset.data.root_pos_w[:, 1] - env.scene.env_origins[:, 1]
     return torch.abs(lateral_pos)

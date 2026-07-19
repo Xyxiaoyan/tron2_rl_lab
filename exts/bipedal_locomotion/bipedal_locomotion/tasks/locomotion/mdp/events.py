@@ -246,3 +246,25 @@ def action_out_of_limits(
     
     # Return True for environments where max action exceeds threshold
     return max_action_per_env > threshold
+
+
+def lateral_deviation_too_large(
+    env: ManagerBasedRLEnv,
+    max_deviation: float = 3.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Terminate when the robot deviates too far laterally from the track center.
+
+    On a corridor-style Camp track (width=8m), the robot should stay within
+    ±max_deviation of the env origin's y-axis. Falling off the track edge
+    wastes training samples and produces misleading reward signals.
+
+    Args:
+        env: The environment instance.
+        max_deviation: Maximum allowed lateral deviation (m) from env origin.
+        asset_cfg: The asset to check. Defaults to "robot".
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    # lateral position relative to env origin
+    lateral_pos = asset.data.root_pos_w[:, 1] - env.scene.env_origins[:, 1]
+    return torch.abs(lateral_pos) > max_deviation
