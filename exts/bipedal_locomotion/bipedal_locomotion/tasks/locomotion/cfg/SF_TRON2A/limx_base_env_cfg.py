@@ -490,14 +490,16 @@ class RewardsCfg:
     )
 
     # 横向速度跟踪 — 命令恒为 0，抑制侧向漂移
+    # 提高权重 (0.5 -> 3.0)：此前横向约束太弱，导致 ~40% episode 因偏出赛道被终止
     track_lin_vel_y_exp = RewTerm(
         func=mdp.track_lin_vel_y_yaw_frame_exp,
-        weight=0.5,
+        weight=3.0,
         params={"command_name": "base_velocity", "std": math.sqrt(0.15)},
     )
 
     # 存活奖励 — 活下去是前提但不是目标
-    keep_balance = RewTerm(func=mdp.stay_alive, weight=1.0)
+    # 提高权重 (1.0 -> 2.0)：此前前进激励(progress=50)是存活的50倍，策略宁可摔倒也要冲
+    keep_balance = RewTerm(func=mdp.stay_alive, weight=2.0)
 
     # ═══════════════════════════════════════════════
     # B. 地形自适应（替换固定姿态/高度惩罚）
@@ -595,9 +597,11 @@ class RewardsCfg:
     )
 
     # 侧向偏移惩罚 — 防止机器人偏离前进轴线（相对 env_origin 的 y 偏移）
+    # 提高权重 (-2.0 -> -5.0)，且函数已改为二次型 y^2：大偏移惩罚增长更快，
+    # 直接针对 ~40% 的 lateral_deviation_termination
     lateral_deviation = RewTerm(
         func=mdp.lateral_deviation_penalty,
-        weight=-2.0,
+        weight=-5.0,
     )
 
     # ═══════════════════════════════════════════════

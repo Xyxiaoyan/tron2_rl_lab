@@ -73,6 +73,15 @@ def main():
 
     env_cfg.seed = agent_cfg.seed
 
+    # 让 viewport 摄像机跟随机器人（而不是固定在 env 原点）
+    # 这样机器人走出视野后仍能看到
+    env_cfg.viewer.origin_type = "asset_root"
+    env_cfg.viewer.asset_name = "robot"
+    env_cfg.viewer.env_index = 0
+    # 摄像机位置：机器人后方上方，俯视前方
+    env_cfg.viewer.eye = (3.0, -3.0, 1.5)
+    env_cfg.viewer.lookat = (0.0, 0.0, 0.5)
+
     # override terrain if requested (camp terrain evaluation)
     # 重要：必须与 train.py 中的 camp 地形接入方式完全一致，否则训练/评估分布不匹配
     if args_cli.terrain != "flat":

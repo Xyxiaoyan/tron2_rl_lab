@@ -418,16 +418,20 @@ class OnPolicyRunner:
         print(log_string)
 
     def save(self, path, infos=None):
-        torch.save(
-            {
-                "model_state_dict": self.alg.actor_critic.state_dict(),
-                "encoder_state_dict": self.alg.encoder.state_dict(),
-                "optimizer_state_dict": self.alg.optimizer.state_dict(),
-                "iter": self.current_learning_iteration,
-                "infos": infos,
-            },
-            path,
-        )
+        save_dict = {
+            "model_state_dict": self.alg.actor_critic.state_dict(),
+            "encoder_state_dict": self.alg.encoder.state_dict(),
+            "optimizer_state_dict": self.alg.optimizer.state_dict(),
+            "iter": self.current_learning_iteration,
+            "infos": infos,
+        }
+        # --- Save sensor_encoder if present ---
+        if self.alg.sensor_encoder is not None and self.sensor_latent_dim > 0:
+            save_dict["sensor_encoder_state_dict"] = self.alg.sensor_encoder.state_dict()
+        # --- Save extra_optimizer (encoder + sensor_encoder params) ---
+        if hasattr(self.alg, "extra_optimizer") and self.alg.extra_optimizer is not None:
+            save_dict["extra_optimizer_state_dict"] = self.alg.extra_optimizer.state_dict()
+        torch.save(save_dict, path)
 
     def load(self, path, load_optimizer=False):
         loaded_dict = torch.load(path)
@@ -451,13 +455,25 @@ class OnPolicyRunner:
         # Load encoder if it exists in checkpoint
         if "encoder_state_dict" in loaded_dict:
             self.alg.encoder.load_state_dict(loaded_dict["encoder_state_dict"])
+
+        # Load sensor_encoder if it exists in checkpoint
+        if ("sensor_encoder_state_dict" in loaded_dict
+                and self.alg.sensor_encoder is not None
+                and self.sensor_latent_dim > 0):
+            self.alg.sensor_encoder.load_state_dict(loaded_dict["sensor_encoder_state_dict"])
             
         if load_optimizer and "optimizer_state_dict" in loaded_dict:
             try:
                 self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
             except Exception as e:
                 print(f"[Warning] Could not load optimizer state dict: {e}")
-                
+
+        if load_optimizer and "extra_optimizer_state_dict" in loaded_dict:
+            try:
+                self.alg.extra_optimizer.load_state_dict(loaded_dict["extra_optimizer_state_dict"])
+            except Exception as e:
+                print(f"[Warning] Could not load extra optimizer state dict: {e}")
+
         self.current_learning_iteration = loaded_dict["iter"]
         return loaded_dict["infos"]
 

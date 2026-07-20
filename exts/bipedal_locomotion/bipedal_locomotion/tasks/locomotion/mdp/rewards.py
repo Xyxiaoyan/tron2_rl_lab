@@ -832,7 +832,10 @@ def progress_reward(
     # Project world velocity into the robot's yaw-aligned frame
     vel_yaw = quat_apply_inverse(yaw_quat(asset.data.root_quat_w), asset.data.root_lin_vel_w[:, :3])
     forward_vel = vel_yaw[:, 0]  # x-component in robot heading frame
-    return torch.clamp(forward_vel, min=0.0)
+    # Gate by uprightness: a falling/sliding robot (projected_gravity_b z ~ -1
+    # when upright) gets no progress reward, preventing "fall forward" hacking.
+    upright = torch.clamp(-asset.data.projected_gravity_b[:, 2], min=0.0, max=1.0)
+    return torch.clamp(forward_vel, min=0.0) * upright
 
 
 def base_height_adaptive(
@@ -966,4 +969,6 @@ def lateral_deviation_penalty(
     asset: RigidObject = env.scene[asset_cfg.name]
     # y position relative to env origin (track is centred at env_origin.y)
     lateral_pos = asset.data.root_pos_w[:, 1] - env.scene.env_origins[:, 1]
-    return torch.abs(lateral_pos)
+    # Quadratic penalty: grows much faster for large deviations, giving a
+    # stronger signal to stay near the track centre than a linear |y| term.
+    return lateral_pos ** 2
