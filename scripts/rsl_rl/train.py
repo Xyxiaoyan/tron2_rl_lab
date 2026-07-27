@@ -24,6 +24,8 @@ parser.add_argument("--save_interval", type=int, default=None, help="The number 
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--checkpoint_path", type=str, default=None, help="Relative path to checkpoint file.")
+parser.add_argument("--terrain", type=str, default="flat", choices=["flat", "camp"],
+                    help="Terrain type: flat (plane) or camp (TRON_CAMP generator).")
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -31,9 +33,10 @@ cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
 
-# always enable cameras to record video
-if args_cli.video:
-    args_cli.enable_cameras = True
+# always enable cameras — SF env has head/down TiledCamera + lidar
+args_cli.enable_cameras = True
+
+# if --video, also set render_mode logic (handled later)
 
 # clear out sys.argv for Hydra
 sys.argv = [sys.argv[0]] + hydra_args
@@ -59,8 +62,10 @@ from isaaclab.envs import (
     ManagerBasedRLEnvCfg,
     multi_agent_to_single_agent,
 )
+import pickle
+
 from isaaclab.utils.dict import print_dict
-# from isaaclab.utils.io import dump_pickle, dump_yaml
+from isaaclab.utils.io import dump_yaml
 from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
 from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
 
@@ -81,23 +86,25 @@ def main():
         task_name=args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs
     )
 
-    # ===== 接入训练地形 =====
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../training_terrain")))
-    from tron_camp_training_terrain import TRON_CAMP_TRAINING_TERRAIN_CFG, TRON2_SPAWN_Z
+    # Terrain selection: flat for stages 1/2, TRON Camp generator for stage 3.
+    if args_cli.terrain == "camp":
+        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../training_terrain")))
+        from tron_camp_training_terrain import TRON_CAMP_TRAINING_TERRAIN_CFG, TRON2_SPAWN_Z
 
-    env_cfg.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
-    # 机器人初始 z 高度：直接放在地面上（脚刚好接触地形），而不是从高空落下
-    # reset_root_state_uniform: positions = default_root_state + env_origins + rand_samples
-    #   default_root_state.z = init_state.pos.z
-    #   rand_samples.z = pose_range["z"]
-    # 要让 spawn z = TRON2_SPAWN_Z (0.966)，需设置 pose_range["z"] = TRON2_SPAWN_Z - init_state.pos.z
-    _init_z = env_cfg.scene.robot.init_state.pos[2]
-    _z_offset = TRON2_SPAWN_Z - _init_z
-    env_cfg.events.reset_robot_base.params["pose_range"]["z"] = (_z_offset, _z_offset)
-    # 增大环境间距，避免地形格子重叠
-    env_cfg.scene.env_spacing = 10.0
-    print(f"[INFO] Camp terrain: init_state.pos.z={_init_z}, pose_range z offset={_z_offset:.4f}, spawn z={TRON2_SPAWN_Z}")
-    # ========================
+        env_cfg.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
+        # reset_root_state_uniform computes:
+        #   position = default_root_state + env_origin + pose_range sample
+        # mixed_terrain origins are now z=0, so this offset places the feet on the surface.
+        _init_z = env_cfg.scene.robot.init_state.pos[2]
+        _z_offset = TRON2_SPAWN_Z - _init_z
+        env_cfg.events.reset_robot_base.params["pose_range"]["z"] = (_z_offset, _z_offset)
+        env_cfg.scene.env_spacing = 10.0
+        print(
+            f"[INFO] Camp terrain: init_state.pos.z={_init_z}, "
+            f"pose_range z offset={_z_offset:.4f}, spawn z={TRON2_SPAWN_Z}"
+        )
+    else:
+        print("[INFO] Using flat terrain (plane)")
 
     agent_cfg: RslRlPpoAlgorithmMlpCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
@@ -161,10 +168,12 @@ def main():
     env.seed(agent_cfg.seed)
 
     # dump the configuration into log-directory
-    # dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
-    # dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
-    # dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
-    # dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
+    dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
+    dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    with open(os.path.join(log_dir, "params", "env.pkl"), "wb") as f:
+        pickle.dump(env_cfg, f)
+    with open(os.path.join(log_dir, "params", "agent.pkl"), "wb") as f:
+        pickle.dump(agent_cfg, f)
 
     # run training
     runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)

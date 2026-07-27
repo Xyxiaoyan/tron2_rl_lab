@@ -135,13 +135,13 @@ class CommandsCfg:
     """Command terms for the MDP — forward only for Camp terrain crossing."""
 
     gait_command = mdp.UniformGaitCommandCfg(
-        resampling_time_range=(10.0, 10.0),
+        resampling_time_range=(3.0, 5.0),
         debug_vis=False,
         ranges=mdp.UniformGaitCommandCfg.Ranges(
             frequencies=(0.9, 0.9),       # 固定步频
             offsets=(0.5, 0.5),
             durations=(0.5, 0.5),
-            swing_height=(0.12, 0.15),     # 缩小摆动高度范围
+            swing_height=(0.05, 0.08),     # 降低抬脚高度（原 0.12-0.15 太夸张）
         ),
     )
 

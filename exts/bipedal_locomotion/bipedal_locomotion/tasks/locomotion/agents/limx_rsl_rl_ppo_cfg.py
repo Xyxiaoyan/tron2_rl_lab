@@ -56,6 +56,32 @@ class SF_TRON2AFlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         orthogonal_init=False,
     )
 
+
+#-----------------------------------------------------------------
+@configclass
+class SF_TRON2AStandStillPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
+    max_iterations = 5000
+    experiment_name = "sf_tron2a_stand_still"
+    policy = RslRlPpoActorCriticCfg(
+        init_noise_std=0.2,
+        actor_hidden_dims=[512, 256, 128],
+        critic_hidden_dims=[512, 256, 128],
+        activation="elu",
+    )
+
+
+@configclass
+class SF_TRON2AFlatWalkPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
+    max_iterations = 15000
+    experiment_name = "sf_tron2a_flat_walk_gait_v2"
+
+
+@configclass
+class SF_TRON2ATerrainWalkPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
+    max_iterations = 15000
+    experiment_name = "sf_tron2a_terrain_walk"
+
+
 #-----------------------------------------------------------------
 @configclass
 class WF_TRON2AFlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
