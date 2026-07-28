@@ -61,7 +61,12 @@ class OnPolicyRunner:
         assert "critic" in obs_dict, f"Critic observations not found in observations"
         num_critic_obs = obs_dict["critic"].shape[1] + self.num_commands
         privileged_input_size = num_critic_obs
-        self.ecd_cfg["num_input_dim"] = self.obs_history_len * self.num_obs
+        # 从实际 obsHistory 计算输入维度（HistoryObsCfg 可能与 PolicyCfg 维度不同）
+        if "obsHistory" in obs_dict:
+            self.num_obs_history = obs_dict["obsHistory"].flatten(start_dim=1).shape[1]
+        else:
+            self.num_obs_history = self.obs_history_len * self.num_obs
+        self.ecd_cfg["num_input_dim"] = self.num_obs_history
 
         encoder = eval("MLP_Encoder")(
             **self.ecd_cfg,
@@ -95,7 +100,7 @@ class OnPolicyRunner:
             self.num_steps_per_env,
             [self.num_obs],
             [num_critic_obs],
-            [self.obs_history_len * self.num_obs],
+            [self.num_obs_history],
             [self.num_commands],
             [self.env.num_actions],
         )

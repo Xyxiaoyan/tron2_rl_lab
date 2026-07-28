@@ -29,7 +29,7 @@ SOLEFOOT_TRON2A_CFG = ArticulationCfg(
         activate_contact_sensors=True,
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.95),
+        pos=(0.0, 0.0, 0.80),
         joint_pos={
             # left leg
             "proximal_pitch_L_Joint": 0.0,

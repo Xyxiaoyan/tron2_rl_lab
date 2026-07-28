@@ -163,7 +163,7 @@ def make_mixed_track(difficulty: float, cfg: "MixedTrackCfg"):
     # 现在长度已知，填充底板 (顶面在 z = 0)。
     meshes[base_idx] = _box(total_len / 2.0, -0.1, total_len, 0.2)
 
-    origin = np.array([1.0, cy, 0.05])  # 在起始平地内约 1 m 处放置
+    origin = np.array([1.0, cy, 0.0])  # 在起始平地内约 1 m 处放置；z=0 与底板顶面齐平
     return meshes, origin
 
 

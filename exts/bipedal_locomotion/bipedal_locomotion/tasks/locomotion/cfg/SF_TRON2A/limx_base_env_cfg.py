@@ -182,6 +182,14 @@ class ObservarionsCfg:
         gait_phase = ObsTerm(func=mdp.get_gait_phase)
         gait_command = ObsTerm(func=mdp.get_gait_command, params={"command_name": "gait_command"})
 
+        # height scan (terrain perception for policy)
+        height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner"), "offset": 0.8},
+            clip=(-1.0, 1.0),
+            scale=5.0,
+        )
+
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
@@ -423,7 +431,7 @@ class RewardsCfg:
     base_height_exp = RewTerm(
         func=mdp.base_height_exp,
         weight=0.6,
-        params={"std": math.sqrt(0.005)},
+        params={"std": math.sqrt(0.005), "target_height": 0.60},
     )
     keep_balance = RewTerm(func=mdp.stay_alive, weight=1.0)
 

@@ -29,7 +29,7 @@ WHEELFOOT_TRON2A_CFG = ArticulationCfg(
         activate_contact_sensors=True,
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.9),
+        pos=(0.0, 0.0, 0.68),
         joint_pos={
             ".*_Joint": 0.0,
         },

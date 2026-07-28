@@ -8,6 +8,7 @@ from isaaclab.assets import Articulation, RigidObject
 from isaaclab.envs import ManagerBasedEnv
 from isaaclab.managers import SceneEntityCfg
 
+
 def prepare_quantity_for_tron(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor | None,

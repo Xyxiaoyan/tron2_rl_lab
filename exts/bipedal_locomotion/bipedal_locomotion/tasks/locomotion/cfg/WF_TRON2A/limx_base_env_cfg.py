@@ -217,6 +217,14 @@ class ObservarionsCfg:
         # last action
         last_action = ObsTerm(func=mdp.last_action)
 
+        # height scan (terrain perception for policy)
+        height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner"), "offset": 0.8},
+            clip=(-1.0, 1.0),
+            scale=5.0,
+        )
+
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
@@ -477,7 +485,7 @@ class RewardsCfg:
     # Reward terms: ---Base regulation
     base_height = RewTerm(
         func=mdp.base_com_height,
-        params={"target_height": 0.73},
+        params={"target_height": 0.68},
         weight=-20.0,
     )
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.3)

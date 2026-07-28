@@ -1,7 +1,15 @@
+import sys
+import os
+
+from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.utils import configclass
 
 from bipedal_locomotion.assets.config.solefoot_tron2a_cfg import SOLEFOOT_TRON2A_CFG
 from bipedal_locomotion.tasks.locomotion.cfg.SF_TRON2A.limx_base_env_cfg import SF_TRON2A_EnvCfg
+
+# 将 training_terrain 加入搜索路径
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../../../../training_terrain"))
+from tron_camp_training_terrain import TRON_CAMP_TRAINING_TERRAIN_CFG
 
 
 ######################
@@ -52,6 +60,7 @@ class SF_TRON2A_BlindFlatEnvCfg(SF_TRON2A_BaseEnvCfg):
         super().__post_init__()
 
         self.scene.height_scanner = None
+        self.observations.policy.height_scan = None
         self.observations.critic.height_scan = None
         self.curriculum.terrain_levels = None
 
@@ -62,5 +71,51 @@ class SF_TRON2A_BlindFlatEnvCfg_PLAY(SF_TRON2A_BaseEnvCfg_PLAY):
         super().__post_init__()
 
         self.scene.height_scanner = None
+        self.observations.policy.height_scan = None
         self.observations.critic.height_scan = None
         self.curriculum.terrain_levels = None
+
+
+############################
+# SF_TRON2A Camp Terrain Environment
+############################
+
+
+@configclass
+class SF_TRON2A_CampEnvCfg(SF_TRON2A_BaseEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        # 接入 Camp 训练地形
+        self.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
+        self.scene.env_spacing = 10.0
+
+        # 配置 height_scanner（critic 特权观测）
+        self.scene.height_scanner = RayCasterCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/base_Link",
+            offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+            ray_alignment="yaw",
+            pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+            debug_vis=False,
+            mesh_prim_paths=["/World/ground"],
+        )
+
+
+@configclass
+class SF_TRON2A_CampEnvCfg_PLAY(SF_TRON2A_BaseEnvCfg_PLAY):
+    def __post_init__(self):
+        super().__post_init__()
+
+        # 接入 Camp 训练地形
+        self.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
+        self.scene.env_spacing = 10.0
+
+        # 配置 height_scanner（critic 特权观测）
+        self.scene.height_scanner = RayCasterCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/base_Link",
+            offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+            ray_alignment="yaw",
+            pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+            debug_vis=False,
+            mesh_prim_paths=["/World/ground"],
+        )

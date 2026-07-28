@@ -45,6 +45,7 @@ python scripts/rsl_rl/train.py --task Isaac-Limx-WF-TRON2A-Blind-Flat-v0 --num_e
 ```
 
 *常用选项：*
+
 - `--checkpoint_path <path>`: 从某 .pt 恢复。
 - `--video`: 开启录像。
 - `--max_iterations N`: 覆盖最大迭代数。
@@ -79,10 +80,10 @@ python scripts/rsl_rl/train.py --task Isaac-Limx-SF-TRON2A-Blind-Flat-v0 --resum
 
 ## 机器人形态
 
-| 形态 | 末端 | task id 前缀 |
-|---|---|---|
+| 形态      | 末端                    | task id 前缀                 |
+| --------- | ----------------------- | ---------------------------- |
 | SF_TRON2A | sole foot (ankle pitch) | `Isaac-Limx-SF-TRON2A-...` |
-| WF_TRON2A | wheel | `Isaac-Limx-WF-TRON2A-...` |
+| WF_TRON2A | wheel                   | `Isaac-Limx-WF-TRON2A-...` |
 
 ## 架构概览
 

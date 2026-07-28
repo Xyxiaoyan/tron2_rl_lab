@@ -2,6 +2,7 @@ import gymnasium as gym
 
 from bipedal_locomotion.tasks.locomotion.agents.limx_rsl_rl_ppo_cfg import (
     SF_TRON2AFlatPPORunnerCfg, WF_TRON2AFlatPPORunnerCfg,
+    SF_TRON2ACampPPORunnerCfg, WF_TRON2ACampPPORunnerCfg,
 )
 
 from . import limx_solefoot_tron2a_env_cfg, limx_wheelfoot_tron2a_env_cfg
@@ -11,8 +12,10 @@ from . import limx_solefoot_tron2a_env_cfg, limx_wheelfoot_tron2a_env_cfg
 ##
 
 limx_sf_tron2a_blind_flat_runner_cfg = SF_TRON2AFlatPPORunnerCfg()
-
 limx_wf_tron2a_blind_flat_runner_cfg = WF_TRON2AFlatPPORunnerCfg()
+
+limx_sf_tron2a_camp_runner_cfg = SF_TRON2ACampPPORunnerCfg()
+limx_wf_tron2a_camp_runner_cfg = WF_TRON2ACampPPORunnerCfg()
 
 
 ##
@@ -45,6 +48,30 @@ gym.register(
 
 
 ######################################
+# SF_TRON2A Camp Terrain Environment
+######################################
+gym.register(
+    id="Isaac-Limx-SF-TRON2A-Camp-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_solefoot_tron2a_env_cfg.SF_TRON2A_CampEnvCfg,
+        "rsl_rl_cfg_entry_point": limx_sf_tron2a_camp_runner_cfg,
+    },
+)
+
+gym.register(
+    id="Isaac-Limx-SF-TRON2A-Camp-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_solefoot_tron2a_env_cfg.SF_TRON2A_CampEnvCfg_PLAY,
+        "rsl_rl_cfg_entry_point": limx_sf_tron2a_camp_runner_cfg,
+    },
+)
+
+
+######################################
 # WF_TRON2A Blind Flat Environment
 ######################################
 gym.register(
@@ -64,5 +91,29 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": limx_wheelfoot_tron2a_env_cfg.WF_TRON2A_BlindFlatEnvCfg_PLAY,
         "rsl_rl_cfg_entry_point": limx_wf_tron2a_blind_flat_runner_cfg,
+    },
+)
+
+
+######################################
+# WF_TRON2A Camp Terrain Environment
+######################################
+gym.register(
+    id="Isaac-Limx-WF-TRON2A-Camp-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wheelfoot_tron2a_env_cfg.WF_TRON2A_CampEnvCfg,
+        "rsl_rl_cfg_entry_point": limx_wf_tron2a_camp_runner_cfg,
+    },
+)
+
+gym.register(
+    id="Isaac-Limx-WF-TRON2A-Camp-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_wheelfoot_tron2a_env_cfg.WF_TRON2A_CampEnvCfg_PLAY,
+        "rsl_rl_cfg_entry_point": limx_wf_tron2a_camp_runner_cfg,
     },
 )
