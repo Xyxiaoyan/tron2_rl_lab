@@ -26,6 +26,24 @@ def normalize_angle(x):
     return torch.atan2(torch.sin(x), torch.cos(x))
 
 
+def corridor_penalty(
+    env: ManagerBasedRLEnv,
+    corridor_half_width: float = 2.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """惩罚机器人偏离赛道中心过远。
+
+    在走廊宽度内无惩罚，超出后线性惩罚。用于约束机器人在赛道内行走，
+    为较窄的评测赛道做准备。
+
+    Args:
+        corridor_half_width: 走廊半宽（从赛道中心到边缘的距离），超出此距离开始惩罚。
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    y_deviation = torch.abs(asset.data.root_pos_w[:, 1] - env.scene.env_origins[:, 1])
+    return torch.clamp(y_deviation - corridor_half_width, min=0.0)
+
+
 def stay_alive(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Reward for staying alive."""
     return torch.ones(env.num_envs, device=env.device)

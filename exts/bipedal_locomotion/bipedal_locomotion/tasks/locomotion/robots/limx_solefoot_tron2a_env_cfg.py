@@ -1,10 +1,12 @@
 import sys
 import os
 
+from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.utils import configclass
 
 from bipedal_locomotion.assets.config.solefoot_tron2a_cfg import SOLEFOOT_TRON2A_CFG
+from bipedal_locomotion.tasks.locomotion import mdp
 from bipedal_locomotion.tasks.locomotion.cfg.SF_TRON2A.limx_base_env_cfg import SF_TRON2A_EnvCfg
 
 # 将 training_terrain 加入搜索路径
@@ -90,7 +92,15 @@ class SF_TRON2A_CampEnvCfg(SF_TRON2A_BaseEnvCfg):
         self.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
         self.scene.env_spacing = 10.0
 
-        # 配置 height_scanner（critic 特权观测）
+        # 启用地形课程（生成难度递增的地形行，随机器人能力提升挑战更难地形）
+        self.scene.terrain.terrain_generator.curriculum = True
+
+        # 前向偏置指令（评测要求穿越赛道，让机器人始终沿赛道前进）
+        self.commands.base_velocity.ranges.lin_vel_x = (0.2, 1.0)  # 只向前
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)  # 减小侧向
+        self.commands.base_velocity.ranges.heading = (0.0, 0.0)     # 固定朝前
+
+        # 配置 height_scanner（policy + critic 地形感知）
         self.scene.height_scanner = RayCasterCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_Link",
             offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
@@ -98,6 +108,13 @@ class SF_TRON2A_CampEnvCfg(SF_TRON2A_BaseEnvCfg):
             pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
             debug_vis=False,
             mesh_prim_paths=["/World/ground"],
+        )
+
+        # 走廊惩罚：约束机器人不偏离赛道中心太远（评测赛道较窄，需提前适应）
+        self.rewards.corridor_penalty = RewTerm(
+            func=mdp.corridor_penalty,
+            weight=-1.0,
+            params={"corridor_half_width": 2.0},
         )
 
 
