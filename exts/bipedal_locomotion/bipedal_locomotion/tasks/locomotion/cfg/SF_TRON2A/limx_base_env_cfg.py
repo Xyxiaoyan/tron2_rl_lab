@@ -415,8 +415,8 @@ class RewardsCfg:
     # Reward terms: ---Task
     track_lin_vel_x_exp = RewTerm(
         func=mdp.track_lin_vel_x_yaw_frame_exp,
-        weight=1.0,
-        params={"command_name": "base_velocity", "std": math.sqrt(0.30)},
+        weight=2.0,
+        params={"command_name": "base_velocity", "std": math.sqrt(0.20)},
     )
     track_lin_vel_y_exp = RewTerm(
         func=mdp.track_lin_vel_y_yaw_frame_exp,
@@ -438,11 +438,11 @@ class RewardsCfg:
     # Reward terms: ---Gait
     gait_reward = RewTerm(
         func=mdp.GaitReward,
-        weight=0.5,
+        weight=1.0,
         params={
             "tracking_contacts_shaped_force": 1.0,
             "tracking_contacts_shaped_vel": 1.0,
-            "tracking_contacts_shaped_height": -0.0,
+            "tracking_contacts_shaped_height": 0.5,
             "gait_force_sigma": 25.0,
             "gait_vel_sigma": 0.25,
             "gait_height_sigma": 0.005,

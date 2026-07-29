@@ -49,6 +49,9 @@ import os
 import torch
 from datetime import datetime
 
+# 设置 PyTorch CPU 线程数（机器有 20 核心，留余量给系统/Isaac Sim）
+torch.set_num_threads(8)
+
 # from rsl_rl.runners import OnPolicyRunner
 from rsl_rl.runner import OnPolicyRunner
 

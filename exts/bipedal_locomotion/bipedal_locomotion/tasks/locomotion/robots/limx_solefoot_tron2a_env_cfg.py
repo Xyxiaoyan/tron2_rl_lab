@@ -100,7 +100,7 @@ class SF_TRON2A_CampEnvCfg(SF_TRON2A_BaseEnvCfg):
         self.events.reset_robot_base.params["pose_range"] = {"yaw": (-0.5, 0.5)}  # 只控制朝向
 
         # 前向偏置指令（评测要求穿越赛道，让机器人始终沿赛道前进）
-        self.commands.base_velocity.ranges.lin_vel_x = (0.2, 1.0)  # 只向前
+        self.commands.base_velocity.ranges.lin_vel_x = (0.5, 1.0)  # 只向前
         self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)  # 减小侧向
         self.commands.base_velocity.ranges.heading = (0.0, 0.0)     # 固定朝前
 
@@ -131,10 +131,11 @@ class SF_TRON2A_CampEnvCfg_PLAY(SF_TRON2A_BaseEnvCfg_PLAY):
         self.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
         self.scene.env_spacing = 10.0
 
-        # 前向偏置指令（与训练环境一致）
-        self.commands.base_velocity.ranges.lin_vel_x = (0.2, 1.0)
-        self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)
+        # 恒定前进速度 0.5 m/s（评测场景）
+        self.commands.base_velocity.ranges.lin_vel_x = (0.5, 0.5)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
         self.commands.base_velocity.ranges.heading = (0.0, 0.0)
+        self.commands.base_velocity.rel_standing_envs = 0.0  # 所有环境都前进，不站立
 
         # 配置 height_scanner（policy + critic 地形感知）
         self.scene.height_scanner = RayCasterCfg(
