@@ -95,9 +95,9 @@ class WF_TRON2A_CampEnvCfg(WF_TRON2A_BaseEnvCfg):
         # 启用地形难度分层（row 0 最简单 -> row 9 最难）
         self.scene.terrain.terrain_generator.curriculum = True
 
-        # 随机起点：在赛道上随机位置出生，从一开始见识各种地形
-        self.events.reset_robot_base.params["pose_range"]["x"] = (-1.0, 50.0)  # 覆盖赛道前 70m
-        self.events.reset_robot_base.params["pose_range"]["yaw"] = (-0.5, 0.5)  # 大致朝前
+        # 随机起点：从地形 flat_patches 采样出生位置，自动获取正确 z 坐标
+        self.events.reset_robot_base.func = mdp.reset_root_state_from_terrain
+        self.events.reset_robot_base.params["pose_range"] = {"yaw": (-0.5, 0.5)}  # 只控制朝向
 
         # 前向偏置指令（评测要求穿越赛道，让机器人始终沿赛道前进）
         self.commands.base_velocity.ranges.lin_vel_x = (0.2, 1.0)  # 只向前

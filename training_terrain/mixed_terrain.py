@@ -24,7 +24,7 @@ import numpy as np
 import trimesh
 
 import isaaclab.sim as sim_utils
-from isaaclab.terrains import SubTerrainBaseCfg, TerrainGeneratorCfg, TerrainImporterCfg
+from isaaclab.terrains import FlatPatchSamplingCfg, SubTerrainBaseCfg, TerrainGeneratorCfg, TerrainImporterCfg
 from isaaclab.utils import configclass
 
 from terrain_base import BetterTerrainGenerator, BetterTerrainImporter
@@ -205,6 +205,15 @@ class MixedTrackCfg(SubTerrainBaseCfg):
     platform_face_x_range: tuple = (0.6, 1.0)
     platform_face_y: float = 1.0             # 窄踏石的深度 (不跨越宽度)
     platform_gap_range: tuple = (1.5, 2.8)
+
+    # 采样平坦位置用于机器人 spawn（自动获取正确 z 坐标，避免穿地弹起）
+    flat_patch_sampling = {
+        "init_pos": FlatPatchSamplingCfg(
+            num_patches=1000,
+            patch_radius=0.5,
+            max_height_diff=0.1,
+        )
+    }
 
 
 def make_training_terrain_cfg(
