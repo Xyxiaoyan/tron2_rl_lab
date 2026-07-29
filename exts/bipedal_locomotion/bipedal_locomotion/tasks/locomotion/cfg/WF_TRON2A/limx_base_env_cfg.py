@@ -3,7 +3,6 @@ from dataclasses import MISSING
 
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
-from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -310,6 +309,7 @@ class ObservarionsCfg:
         )
 
         # Privileged observation
+        lateral_position = ObsTerm(func=mdp.lateral_position_in_corridor, scale=1.0)
         robot_joint_torque = ObsTerm(func=mdp.robot_joint_torque, scale=0.05)
         robot_joint_acc = ObsTerm(func=mdp.robot_joint_acc, scale=0.0025)
         feet_lin_vel = ObsTerm(
@@ -568,7 +568,7 @@ class TerminationsCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP"""
 
-    terrain_levels = CurrTerm(func=mdp.terrain_levels_vel_custom)
+    pass
 
 
 ########################
@@ -595,7 +595,7 @@ class WF_TRON2A_EnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self):
         """Post initialization"""
         self.decimation = 4
-        self.episode_length_s = 20.0
+        self.episode_length_s = 100.0
         # simulation settings
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation

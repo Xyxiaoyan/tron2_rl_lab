@@ -241,9 +241,10 @@ def make_training_terrain_cfg(
             vertical_scale=0.005,
             slope_threshold=0.75,
             use_cache=False,
+            curriculum=True,
             sub_terrains={"track": track},
         ),
-        max_init_terrain_level=0,
+        max_init_terrain_level=9,
         collision_group=-1,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",

@@ -20,6 +20,7 @@ TRACK_WIDTH = 8.0
 _track = MixedTrackCfg()
 _track.step_height_range = (0.10, 0.18)
 _track.platform_height_range = (0.15, 0.40)   # 上界贴齐评测 S8 最高台 0.40 m（评测已去掉原 0.50 m 台）
+_track.bump_height_range = (0.05, 0.20)       # 降低凸起高度，让机器人先学会跨越小障碍
 
 # 10 x 10 = 100 条各自独立随机化的赛道（难度随行递增）。按你的 GPU 调整。
 TRON_CAMP_TRAINING_TERRAIN_CFG = make_training_terrain_cfg(

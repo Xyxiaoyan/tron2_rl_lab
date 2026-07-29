@@ -30,11 +30,27 @@ def terrain_levels_vel_custom(
     command = env.command_manager.get_command("base_velocity")
     # 机器人从 spawn 点走出的距离
     distance = torch.norm(asset.data.root_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1)
-    # 走得够远 -> 升级到更难的地形（阈值 size[0]/4，原版为 size[0]/2）
-    move_up = distance > terrain.cfg.terrain_generator.size[0] / 4
+    # 走得够远 -> 升级到更难的地形（阈值 size[0]/8 = 10m）
+    move_up = distance > terrain.cfg.terrain_generator.size[0] / 8
     # 走得不够 -> 降级到更简单的地形
-    move_down = distance < torch.norm(command[env_ids, :2], dim=1) * env.max_episode_length_s * 0.5
+    move_down = distance < torch.norm(command[env_ids, :2], dim=1) * env.max_episode_length_s * 0.25
     move_down *= ~move_up
+
+    # [DEBUG] 诊断课程不升级的问题
+    if env.common_step_counter % 500 == 0 and len(env_ids) > 0:
+        print(
+            f"[DEBUG curriculum] step={env.common_step_counter}  "
+            f"n_reset={len(env_ids)}  "
+            f"dist_mean={distance.mean().item():.2f}  "
+            f"dist_max={distance.max().item():.2f}  "
+            f"move_up={move_up.sum().item()}  "
+            f"move_down={move_down.sum().item()}  "
+            f"terrain_levels_mean={terrain.terrain_levels.float().mean().item():.4f}  "
+            f"terrain_origins_is_none={terrain.terrain_origins is None}  "
+            f"curriculum_flag={terrain.cfg.terrain_generator.curriculum}  "
+            f"size0={terrain.cfg.terrain_generator.size[0]}"
+        )
+
     terrain.update_env_origins(env_ids, move_up, move_down)
     return torch.mean(terrain.terrain_levels.float())
 

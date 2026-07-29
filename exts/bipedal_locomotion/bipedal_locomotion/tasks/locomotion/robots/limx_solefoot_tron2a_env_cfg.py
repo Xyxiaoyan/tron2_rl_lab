@@ -92,8 +92,12 @@ class SF_TRON2A_CampEnvCfg(SF_TRON2A_BaseEnvCfg):
         self.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
         self.scene.env_spacing = 10.0
 
-        # 启用地形课程（生成难度递增的地形行，随机器人能力提升挑战更难地形）
+        # 启用地形难度分层（row 0 最简单 -> row 9 最难）
         self.scene.terrain.terrain_generator.curriculum = True
+
+        # 随机起点：在赛道上随机位置出生，从一开始见识各种地形
+        self.events.reset_robot_base.params["pose_range"]["x"] = (-1.0, 50.0)  # 覆盖赛道前 70m
+        self.events.reset_robot_base.params["pose_range"]["yaw"] = (-0.5, 0.5)  # 大致朝前
 
         # 前向偏置指令（评测要求穿越赛道，让机器人始终沿赛道前进）
         self.commands.base_velocity.ranges.lin_vel_x = (0.2, 1.0)  # 只向前
@@ -127,7 +131,12 @@ class SF_TRON2A_CampEnvCfg_PLAY(SF_TRON2A_BaseEnvCfg_PLAY):
         self.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
         self.scene.env_spacing = 10.0
 
-        # 配置 height_scanner（critic 特权观测）
+        # 前向偏置指令（与训练环境一致）
+        self.commands.base_velocity.ranges.lin_vel_x = (0.2, 1.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)
+        self.commands.base_velocity.ranges.heading = (0.0, 0.0)
+
+        # 配置 height_scanner（policy + critic 地形感知）
         self.scene.height_scanner = RayCasterCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_Link",
             offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),

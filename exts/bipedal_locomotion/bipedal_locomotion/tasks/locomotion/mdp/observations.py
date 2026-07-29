@@ -18,6 +18,18 @@ def robot_joint_torque(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEn
     return asset.data.applied_torque.to(device)
 
 
+def lateral_position_in_corridor(
+    env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """机器人相对于赛道中心的横向偏移量（特权观测）。
+
+    返回 root_pos_w[:, 1] - env_origins[:, 1]，即机器人 y 坐标与 spawn 点 y 坐标之差。
+    正值表示偏向赛道一侧，负值表示偏向另一侧。
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return (asset.data.root_pos_w[:, 1] - env.scene.env_origins[:, 1]).unsqueeze(1)
+
+
 def robot_joint_acc(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """joint acc of the robot"""
     asset: Articulation = env.scene[asset_cfg.name]
