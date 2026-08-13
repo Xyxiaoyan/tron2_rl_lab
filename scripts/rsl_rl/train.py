@@ -6,6 +6,10 @@ import argparse
 import sys
 import os
 
+# 设置 PyTorch CPU 线程数（在 import torch 之前通过环境变量设置更可靠）
+os.environ["OMP_NUM_THREADS"] = "8"
+os.environ["MKL_NUM_THREADS"] = "8"
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../rsl_rl")))
 
 from isaaclab.app import AppLauncher
@@ -49,7 +53,7 @@ import os
 import torch
 from datetime import datetime
 
-# 设置 PyTorch CPU 线程数（机器有 20 核心，留余量给系统/Isaac Sim）
+# 设置 PyTorch CPU 线程数
 torch.set_num_threads(8)
 
 # from rsl_rl.runners import OnPolicyRunner

@@ -26,6 +26,44 @@ def normalize_angle(x):
     return torch.atan2(torch.sin(x), torch.cos(x))
 
 
+def forward_progress(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """奖励机器人沿赛道方向（世界 x 轴）的位移增量。
+
+    每步计算当前 x 位置与上一步 x 位置之差（= 位移增量）。
+    这等价于速度 × dt，但直接基于位置变化，无法通过原地踏步欺骗。
+    正增量（前进）给奖励，零/负增量（原地/后退）给惩罚。
+
+    自动检测 reset（位置突变 > 1m）并重置缓存，避免跨 episode 的错误增量。
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    pos_x = asset.data.root_pos_w[:, 0]
+
+    # 首次调用：初始化缓存，返回 0
+    if not hasattr(env, "_prev_pos_x"):
+        env._prev_pos_x = pos_x.clone()
+        return torch.zeros(env.num_envs, device=env.device)
+
+    # 检测 reset：位置突变 > 1m 说明机器人被传送到新起点
+    pos_jump = torch.abs(pos_x - env._prev_pos_x) > 1.0
+    # 对 reset 的环境，重置缓存为当前位置（本帧增量=0）
+    env._prev_pos_x = torch.where(pos_jump, pos_x, env._prev_pos_x)
+
+    # 位移增量 = 当前 - 上一步
+    delta_x = pos_x - env._prev_pos_x
+    env._prev_pos_x = pos_x.clone()
+
+    # 正增量给奖励，原地/后退给惩罚（放大让站着不动惩罚更高）
+    reward = torch.where(
+        delta_x > 0.0,
+        torch.clamp(delta_x * 50.0, max=1.5),     # 前进：放大增量（dt=0.02，×50 ≈ 速度）
+        torch.clamp(delta_x * 150.0, min=-0.5),   # 原地/后退：放大惩罚（比之前更狠）
+    )
+    return reward
+
+
 def corridor_penalty(
     env: ManagerBasedRLEnv,
     corridor_half_width: float = 2.0,
@@ -210,6 +248,69 @@ def distance_aligned(
     vy_weight = (1.0 - x) ** decay_power
 
     return (reward_1 + vy_weight * reward_2) / 2
+
+
+def terrain_adaptive_height(
+    env: ManagerBasedRLEnv,
+    std: float,
+    stand_height: float = 0.60,
+    lookahead: float = 0.3,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("height_scanner"),
+) -> torch.Tensor:
+    """地形自适应高度奖励。
+
+    根据机器人前方地形高度动态调整目标 base 高度：
+    - 前方是台阶/上坡（地形升高）→ 目标高度升高，奖励机器人爬上去
+    - 前方是下坡/下台阶（地形下降）→ 目标高度降低，奖励机器人降下来
+    - 前方平坦 → 目标高度 = stand_height（与固定高度奖励一致）
+
+    Args:
+        stand_height: 平地上的目标 base 高度（相对脚下地面）。
+        lookahead: 前方 lookahead 米内的最高点作为目标地形高度。
+    """
+    from isaaclab.sensors import RayCaster
+
+    asset: RigidObject = env.scene[asset_cfg.name]
+    sensor: RayCaster = env.scene[sensor_cfg.name]
+
+    # 射线命中点（世界坐标）和传感器位置
+    hits_w = sensor.data.ray_hits_w  # (num_envs, num_rays, 3)
+    sensor_pos = sensor.data.pos_w   # (num_envs, 3)
+
+    # 转到机器人局部坐标（只看 yaw），区分前方/后方
+    base_yaw_quat = math_utils.yaw_quat(asset.data.root_quat_w)  # (num_envs, 4)
+    hits_rel = hits_w - sensor_pos.unsqueeze(1)  # 相对传感器
+    hits_local = math_utils.quat_apply_inverse(
+        base_yaw_quat.unsqueeze(1).expand(-1, hits_rel.shape[1], -1).reshape(-1, 4),
+        hits_rel.reshape(-1, 3),
+    ).reshape(hits_rel.shape)
+
+    # 筛选前方点（local x > lookahead），取这些点的世界 z
+    is_ahead = hits_local[..., 0] > lookahead
+    hits_z = hits_w[..., 2]
+    # 前方最高点：用 where 而非 -1e6 填充，避免无前方点时产生极端值
+    # 无前方点时退回当前地面（delta=0）
+    ground_z = torch.median(hits_z, dim=1)[0]  # (num_envs,) 当前脚下地面
+    max_ahead_z = torch.where(
+        is_ahead.any(dim=1),
+        torch.where(is_ahead, hits_z, torch.full_like(hits_z, -1e4)).max(dim=1)[0],
+        ground_z,  # 无前方点时退回地面
+    )
+
+    # 前方地形相对当前地面的高度差，clamp 到合理范围避免 NaN
+    terrain_delta = torch.clamp(max_ahead_z - ground_z, min=-1.0, max=1.0)
+
+    # 目标 base 高度 = 当前地面高度 + stand_height + 软化的前方高度差
+    soft_delta = terrain_delta * torch.sigmoid(torch.abs(terrain_delta) * 5.0)
+    target_height = ground_z + stand_height + soft_delta
+
+    # 指数奖励：base 接近目标高度
+    base_z = asset.data.root_pos_w[:, 2]
+    height_error = torch.square(base_z - target_height)
+    reward = torch.exp(-height_error / std**2)
+    # 防止 NaN 传播（传感器未初始化时返回 0）
+    return torch.nan_to_num(reward, nan=0.0)
 
 
 def stand_still(
@@ -544,6 +645,7 @@ class GaitReward(ManagerTermBase):
         self.force_sigma = cfg.params["gait_force_sigma"]
         self.vel_sigma = cfg.params["gait_vel_sigma"]
         self.height_sigma = cfg.params["gait_height_sigma"]
+        self.stand_height = float(cfg.params.get("stand_height", 0.60))
         self.touch_down_vel = float(cfg.params["touch_down_vel"])
         self.kappa_gait_probs = cfg.params["kappa_gait_probs"]
         self.command_name = cfg.params["command_name"]
@@ -604,7 +706,13 @@ class GaitReward(ManagerTermBase):
         # Height-based reward
         if self.height_scale != 0:
             foot_heights = self.asset.data.body_pos_w[:, self.asset_cfg.body_ids, 2]
-            height_reward = self._compute_height_reward(foot_heights, self.des_foot_height, desired_contact_states)
+            base_height = self.asset.data.root_pos_w[:, 2]
+            height_reward = self._compute_height_reward(
+                foot_heights,
+                self.des_foot_height,
+                desired_contact_states,
+                base_height,
+            )
             total_reward += height_reward
 
         # stand still env , set to zero
@@ -764,30 +872,45 @@ class GaitReward(ManagerTermBase):
         return (reward / foot_velocity_norm.shape[1]) * self.vel_scale
 
     def _compute_height_reward(
-        self, foot_heights: torch.Tensor, des_foot_height: torch.Tensor, desired_contacts: torch.Tensor
+        self,
+        foot_heights: torch.Tensor,
+        des_foot_height: torch.Tensor,
+        desired_contacts: torch.Tensor,
+        base_height: torch.Tensor,
     ) -> torch.Tensor:
-        """Compute height-based reward component."""
+        """Compute foot-height reward relative to the current base height.
+
+        The nominal stance-foot height is ``base_height - stand_height``. During
+        swing, the reference gait trajectory is added on top of that nominal
+        height. This makes the target follow the robot up and down terrain instead
+        of incorrectly anchoring the feet to world z=0.
+        """
         reward = torch.zeros_like(foot_heights[:, 0])
+        nominal_foot_height = base_height - self.stand_height
         if self.height_scale < 0:  # Negative scale means penalize movement during contact
             for i in range(foot_heights.shape[1]):
                 if self.use_reference_motion:
                     swing_phase = 1 - desired_contacts[:, i]
-                    # if self.cfg.terrain.mesh_type == "plane":
+                    desired_swing_height = nominal_foot_height + des_foot_height
                     reward += swing_phase * (
-                        1 - torch.exp(-(foot_heights[:, i] - des_foot_height) ** 2 / self.height_sigma)
+                        1 - torch.exp(-(foot_heights[:, i] - desired_swing_height) ** 2 / self.height_sigma)
                     )
                 stand_phase = desired_contacts[:, i]
-                reward += stand_phase * (1 - torch.exp(-(foot_heights[:, i]) ** 2 / self.height_sigma))
+                reward += stand_phase * (
+                    1 - torch.exp(-(foot_heights[:, i] - nominal_foot_height) ** 2 / self.height_sigma)
+                )
         else:  # Positive scale means reward movement during swing
             for i in range(foot_heights.shape[1]):
                 if self.use_reference_motion:
                     swing_phase = 1 - desired_contacts[:, i]
-                    # if self.cfg.terrain.mesh_type == "plane":
+                    desired_swing_height = nominal_foot_height + des_foot_height
                     reward += swing_phase * torch.exp(
-                        -(foot_heights[:, i] - des_foot_height) ** 2 / self.height_sigma
+                        -(foot_heights[:, i] - desired_swing_height) ** 2 / self.height_sigma
                     )
                 stand_phase = desired_contacts[:, i]
-                reward += stand_phase * torch.exp(-(foot_heights[:, i]) ** 2 / self.height_sigma)
+                reward += stand_phase * torch.exp(
+                    -(foot_heights[:, i] - nominal_foot_height) ** 2 / self.height_sigma
+                )
 
         return (reward / foot_heights.shape[1]) * self.height_scale
 

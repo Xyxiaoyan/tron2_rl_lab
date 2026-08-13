@@ -92,3 +92,15 @@ class SF_TRON2ACampPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
 @configclass
 class WF_TRON2ACampPPORunnerCfg(WF_TRON2AFlatPPORunnerCfg):
     experiment_name = "wf_tron_2a_camp"
+
+
+#-----------------------------------------------------------------
+@configclass
+class SF_TRON2AStairsPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
+    experiment_name = "sf_tron_2a_stairs"
+
+
+#-----------------------------------------------------------------
+@configclass
+class WF_TRON2AStairsPPORunnerCfg(WF_TRON2AFlatPPORunnerCfg):
+    experiment_name = "wf_tron_2a_stairs"

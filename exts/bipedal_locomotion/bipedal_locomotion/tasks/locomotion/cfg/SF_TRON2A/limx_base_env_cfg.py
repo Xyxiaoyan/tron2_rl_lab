@@ -92,7 +92,7 @@ class CommandsCfg:
             frequencies=(0.8, 1.0),  # Gait frequency range [Hz]
             offsets=(0.5, 0.5),  # Phase offset range [0-1]
             durations=(0.5, 0.5),  # Contact duration range [0-1]
-            swing_height=(0.15, 0.30), #提高步态的离地摆动高度范围 [m]
+            swing_height=(0.20, 0.50), #提高步态的离地摆动高度范围 [m]，适应台阶高度
         ),
     )
 
@@ -415,13 +415,13 @@ class RewardsCfg:
     # Reward terms: ---Task
     track_lin_vel_x_exp = RewTerm(
         func=mdp.track_lin_vel_x_yaw_frame_exp,
-        weight=2.0,
-        params={"command_name": "base_velocity", "std": math.sqrt(0.20)},
+        weight=4.0,
+        params={"command_name": "base_velocity", "std": math.sqrt(0.15)},
     )
     track_lin_vel_y_exp = RewTerm(
         func=mdp.track_lin_vel_y_yaw_frame_exp,
-        weight=1.0,
-        params={"command_name": "base_velocity", "std": math.sqrt(0.30)},
+        weight=3.0,
+        params={"command_name": "base_velocity", "std": math.sqrt(0.10)},
     )
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_exp,
@@ -435,6 +435,9 @@ class RewardsCfg:
     )
     keep_balance = RewTerm(func=mdp.stay_alive, weight=1.0)
 
+    # 前进奖励：直接奖励 x 方向正速度，鼓励机器人实打实往前走，跨越障碍
+    forward_progress = RewTerm(func=mdp.forward_progress, weight=1.0)
+
     # Reward terms: ---Gait
     gait_reward = RewTerm(
         func=mdp.GaitReward,
@@ -446,6 +449,7 @@ class RewardsCfg:
             "gait_force_sigma": 25.0,
             "gait_vel_sigma": 0.25,
             "gait_height_sigma": 0.005,
+            "stand_height": 0.60,
             "touch_down_vel": 0.0,
             "kappa_gait_probs": 0.05,
             "command_name": "gait_command",
