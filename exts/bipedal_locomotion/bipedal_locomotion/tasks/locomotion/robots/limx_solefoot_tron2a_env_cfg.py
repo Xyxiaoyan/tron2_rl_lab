@@ -123,12 +123,18 @@ class SF_TRON2A_CampEnvCfg(SF_TRON2A_BaseEnvCfg):
             params={"corridor_half_width": 1.0},
         )
 
-        # 地形自适应高度奖励：替换固定的 base_height_exp
-        # 根据前方地形高度动态调整目标 base 高度（上台阶升高、下坡降低）
+        # 基于当前支撑脚高度调整 base 目标，避免在障碍前伸直腿刷高度奖励。
         self.rewards.base_height_exp = RewTerm(
-            func=mdp.terrain_adaptive_height,
+            func=mdp.support_foot_adaptive_height,
             weight=1.0,
-            params={"std": math.sqrt(0.05), "stand_height": 0.60, "lookahead": 0.3},
+            params={
+                "std": math.sqrt(0.05),
+                "stand_height": 0.60,
+                "foot_radius": 0.074,
+                "contact_threshold": 1.0,
+                "foot_cfg": SceneEntityCfg("robot", body_names="ankle_pitch_.*"),
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+            },
         )
 
 
@@ -201,11 +207,18 @@ class SF_TRON2A_StairsEnvCfg(SF_TRON2A_BaseEnvCfg):
             params={"corridor_half_width": 1.0},
         )
 
-        # 地形自适应高度奖励：替换固定的 base_height_exp（楼梯场景尤其重要）
+        # 只有支撑脚真正踩上台阶后才提高 base 目标，防止原地伸腿投机。
         self.rewards.base_height_exp = RewTerm(
-            func=mdp.terrain_adaptive_height,
+            func=mdp.support_foot_adaptive_height,
             weight=1.0,
-            params={"std": math.sqrt(0.05), "stand_height": 0.60, "lookahead": 0.3},
+            params={
+                "std": math.sqrt(0.05),
+                "stand_height": 0.60,
+                "foot_radius": 0.074,
+                "contact_threshold": 1.0,
+                "foot_cfg": SceneEntityCfg("robot", body_names="ankle_pitch_.*"),
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+            },
         )
 
 

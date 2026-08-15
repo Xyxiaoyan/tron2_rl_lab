@@ -313,6 +313,51 @@ def terrain_adaptive_height(
     return torch.nan_to_num(reward, nan=0.0)
 
 
+def support_foot_adaptive_height(
+    env: ManagerBasedRLEnv,
+    std: float,
+    stand_height: float = 0.60,
+    foot_radius: float = 0.074,
+    contact_threshold: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    foot_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="ankle_pitch_.*"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+) -> torch.Tensor:
+    """Reward base height relative to the feet that currently support the robot.
+
+    A forward terrain scan must not directly raise the target base height: doing
+    so lets the policy collect reward by straightening its legs in front of a
+    step. Instead, the target rises only after a foot actually contacts a higher
+    support surface. During double support the two support heights are averaged;
+    when neither foot is in contact, the lower foot provides a stable fallback.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    feet_z = asset.data.body_pos_w[:, foot_cfg.body_ids, 2]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids]
+    max_contact_force = torch.norm(contact_forces, dim=-1).max(dim=1)[0]
+    contacts = max_contact_force > contact_threshold
+
+    # The tracked ankle body origin is at the center of the rounded foot, so
+    # subtract the radius to estimate the supporting terrain surface.
+    feet_ground_z = feet_z - foot_radius
+    contact_weights = contacts.to(feet_ground_z.dtype)
+    num_contacts = contact_weights.sum(dim=1)
+    support_ground_z = torch.sum(feet_ground_z * contact_weights, dim=1) / num_contacts.clamp(min=1.0)
+
+    # In flight there is no measured support surface. Referencing the lower foot
+    # keeps the reward about leg extension rather than an unseen forward step.
+    fallback_ground_z = torch.min(feet_ground_z, dim=1)[0]
+    support_ground_z = torch.where(num_contacts > 0.0, support_ground_z, fallback_ground_z)
+
+    target_height = support_ground_z + stand_height
+    base_z = asset.data.root_pos_w[:, 2]
+    height_error = torch.square(base_z - target_height)
+    reward = torch.exp(-height_error / std**2)
+    return torch.nan_to_num(reward, nan=0.0)
+
+
 def stand_still(
     env,
     lin_threshold: float = 0.05,
@@ -667,6 +712,7 @@ class GaitReward(ManagerTermBase):
         sensor_cfg,
         asset_cfg,
         use_reference_motion,
+        stand_height=0.60,
     ) -> torch.Tensor:
         """Compute the reward.
 
@@ -712,6 +758,7 @@ class GaitReward(ManagerTermBase):
                 self.des_foot_height,
                 desired_contact_states,
                 base_height,
+                stand_height,
             )
             total_reward += height_reward
 
@@ -877,6 +924,7 @@ class GaitReward(ManagerTermBase):
         des_foot_height: torch.Tensor,
         desired_contacts: torch.Tensor,
         base_height: torch.Tensor,
+        stand_height: float,
     ) -> torch.Tensor:
         """Compute foot-height reward relative to the current base height.
 
@@ -886,7 +934,7 @@ class GaitReward(ManagerTermBase):
         of incorrectly anchoring the feet to world z=0.
         """
         reward = torch.zeros_like(foot_heights[:, 0])
-        nominal_foot_height = base_height - self.stand_height
+        nominal_foot_height = base_height - stand_height
         if self.height_scale < 0:  # Negative scale means penalize movement during contact
             for i in range(foot_heights.shape[1]):
                 if self.use_reference_motion:
