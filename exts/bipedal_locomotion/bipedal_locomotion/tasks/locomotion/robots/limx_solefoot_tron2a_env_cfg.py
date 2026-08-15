@@ -3,6 +3,7 @@ import sys
 import os
 
 from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.utils import configclass
 
