@@ -31,6 +31,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 
 from ..modules import ActorCritic, MLP_Encoder
 from ..storage import RolloutStorage
@@ -102,6 +103,51 @@ class PPO:
         self.lam = lam
         self.max_grad_norm = max_grad_norm
         self.use_clipped_value_loss = use_clipped_value_loss
+        self.imitation_replay = None
+        self.imitation_skill_indices = None
+        self.imitation_coef = 0.0
+        self.imitation_batch_size = 0
+        self.last_imitation_loss = 0.0
+
+    def set_imitation_replay(self, replay: dict, coefficient: float, batch_size: int = 2048):
+        """Attach a balanced CPU teacher replay used during PPO fine-tuning."""
+        required = {"obs", "history", "commands", "actions", "skill_ids"}
+        missing = required - set(replay)
+        if missing:
+            raise KeyError(f"Imitation replay is missing keys: {sorted(missing)}")
+        if coefficient < 0.0 or batch_size <= 0:
+            raise ValueError("Imitation coefficient must be non-negative and batch size positive.")
+        lengths = {key: replay[key].shape[0] for key in required}
+        if len(set(lengths.values())) != 1:
+            raise ValueError(f"Imitation replay tensors have inconsistent lengths: {lengths}")
+        self.imitation_replay = {key: replay[key].detach().to("cpu") for key in required}
+        skills = self.imitation_replay["skill_ids"].to(dtype=torch.long).flatten()
+        self.imitation_skill_indices = {
+            int(skill): torch.nonzero(skills == skill, as_tuple=False).flatten()
+            for skill in torch.unique(skills).tolist()
+        }
+        self.imitation_coef = coefficient
+        self.imitation_batch_size = batch_size
+        print(
+            f"[INFO] Loaded {lengths['obs']} balanced teacher samples "
+            f"across skills {sorted(self.imitation_skill_indices)} (coef={coefficient})."
+        )
+
+    def _imitation_loss(self):
+        if self.imitation_replay is None or self.imitation_coef == 0.0:
+            return torch.zeros((), device=self.device)
+        per_skill = max(1, self.imitation_batch_size // len(self.imitation_skill_indices))
+        sampled = []
+        for indices in self.imitation_skill_indices.values():
+            sampled.append(indices[torch.randint(len(indices), (per_skill,))])
+        indices = torch.cat(sampled)
+        obs = self.imitation_replay["obs"][indices].to(self.device)
+        history = self.imitation_replay["history"][indices].to(self.device)
+        commands = self.imitation_replay["commands"][indices].to(self.device)
+        targets = self.imitation_replay["actions"][indices].to(self.device)
+        latent = self.encoder.encode(history)
+        predictions = self.actor_critic.actor(torch.cat((latent, obs, commands), dim=-1))
+        return F.smooth_l1_loss(predictions, targets)
 
     def init_storage(
         self,
@@ -182,6 +228,7 @@ class PPO:
         mean_value_loss = 0
         mean_surrogate_loss = 0
         mean_kl = 0
+        mean_imitation_loss = 0
         generator = self.storage.mini_batch_generator(
             self.num_group,
             self.num_mini_batches,
@@ -276,6 +323,8 @@ class PPO:
                 + self.value_loss_coef * value_loss
                 - self.entropy_coef * entropy_batch_mean
             )
+            imitation_loss = self._imitation_loss()
+            loss = loss + self.imitation_coef * imitation_loss
 
             if self.anneal_lr:
                 frac = 1.0 - num_updates / (
@@ -293,6 +342,7 @@ class PPO:
             mean_value_loss += value_loss.item()
             mean_surrogate_loss += surrogate_loss.item()
             mean_kl += kl_mean.item()
+            mean_imitation_loss += imitation_loss.item()
 
         num_updates_extra = 0
         mean_extra_loss = 0
@@ -328,6 +378,7 @@ class PPO:
             mean_extra_loss /= num_updates
         mean_surrogate_loss /= num_updates
         mean_kl /= num_updates
+        self.last_imitation_loss = mean_imitation_loss / num_updates
         self.storage.clear()
 
         return (mean_value_loss, mean_extra_loss, mean_surrogate_loss, mean_kl)

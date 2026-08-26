@@ -3,4 +3,6 @@
 
 """Implementation of runners for environment-agent interaction."""
 from .on_policy_runner import OnPolicyRunner
+from .multi_teacher_runner import MultiTeacherRunner
 
+__all__ = ["OnPolicyRunner", "MultiTeacherRunner"]

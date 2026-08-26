@@ -95,11 +95,27 @@ class GroundPlaneCfg(SpawnerCfg):
 @configclass
 class BetterTerrainGeneratorCfg(TerrainGeneratorCfg):
     terrain_sequence: list[str] | None = None
+    # Optional training-only mapping used by multi-teacher distillation.  The
+    # resulting labels live on the terrain generator and are never part of the
+    # policy observation.
+    skill_id_by_terrain: dict[str, int] | None = None
 
 
 class BetterTerrainGenerator(TerrainGenerator):
-    sub_terrain_types = []
-    _cell_counter = 0
+    def __init__(self, cfg: BetterTerrainGeneratorCfg, device: str):
+        # These used to be class attributes, which leaked state across multiple
+        # terrain generators created in the same Python process.
+        self.sub_terrain_types: list[str] = []
+        self._cell_counter = 0
+        self._last_sub_terrain_key: str | None = None
+        self.terrain_skill_ids = np.full((cfg.num_rows, cfg.num_cols), -1, dtype=np.int64)
+        super().__init__(cfg=cfg, device=device)
+        # Keep a device tensor so observation terms do not allocate every step.
+        import torch
+
+        self.terrain_skill_ids_tensor = torch.as_tensor(
+            self.terrain_skill_ids, dtype=torch.long, device=device
+        )
 
     def _get_terrain_mesh(
         self, difficulty: float, cfg: SubTerrainBaseCfg
@@ -117,6 +133,7 @@ class BetterTerrainGenerator(TerrainGenerator):
 
         self._cell_counter += 1
         self.sub_terrain_types.append(key)
+        self._last_sub_terrain_key = key
 
         # 永久的安全网：在每个 primitive 成为 collider 之前校验其面法线。
         orig_fn = cfg.function
@@ -138,3 +155,14 @@ class BetterTerrainGenerator(TerrainGenerator):
             return super()._get_terrain_mesh(difficulty, cfg)
         finally:
             cfg.function = orig_fn
+
+    def _add_sub_terrain(self, mesh, origin, row, col, sub_terrain_cfg):
+        super()._add_sub_terrain(mesh, origin, row, col, sub_terrain_cfg)
+        mapping = getattr(self.cfg, "skill_id_by_terrain", None)
+        if mapping is not None and self._last_sub_terrain_key is not None:
+            if self._last_sub_terrain_key not in mapping:
+                raise KeyError(
+                    f"Missing skill id for terrain '{self._last_sub_terrain_key}'. "
+                    f"Configured mappings: {mapping}"
+                )
+            self.terrain_skill_ids[row, col] = mapping[self._last_sub_terrain_key]

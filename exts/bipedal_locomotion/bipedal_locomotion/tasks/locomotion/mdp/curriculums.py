@@ -55,6 +55,99 @@ def terrain_levels_vel_custom(
     return torch.mean(terrain.terrain_levels.float())
 
 
+def terrain_levels_stairs(
+    env: "ManagerBasedRLEnv",
+    env_ids: Sequence[int],
+    move_up_distance: float = 7.5,
+    move_down_distance: float = 2.5,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Adjust stair difficulty from forward progress during the finished episode.
+
+    Stair environments reset near their terrain origin. Advancing beyond
+    ``move_up_distance`` therefore means the robot has entered and climbed a
+    meaningful part of the staircase. Failing before ``move_down_distance``
+    lowers the level, while intermediate progress preserves the current level.
+    Only forward x progress is used, so lateral motion or retreat cannot promote
+    an environment.
+    """
+    from isaaclab.assets import Articulation
+    from isaaclab.terrains import TerrainImporter
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    terrain: TerrainImporter = env.scene.terrain
+
+    # CurriculumManager also runs during the initial reset, before any policy
+    # episode has occurred. Preserve the configured initial level distribution.
+    if env.common_step_counter == 0:
+        return torch.mean(terrain.terrain_levels.float())
+
+    forward_progress = asset.data.root_pos_w[env_ids, 0] - env.scene.env_origins[env_ids, 0]
+    move_up = forward_progress > move_up_distance
+    move_down = (forward_progress < move_down_distance) & ~move_up
+
+    terrain.update_env_origins(env_ids, move_up, move_down)
+    return torch.mean(terrain.terrain_levels.float())
+
+
+def terrain_levels_forward(
+    env: "ManagerBasedRLEnv",
+    env_ids: Sequence[int],
+    move_up_distance: float,
+    move_down_distance: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Generic forward-progress curriculum shared by all teacher terrains."""
+    from isaaclab.assets import Articulation
+    from isaaclab.terrains import TerrainImporter
+
+    if move_down_distance >= move_up_distance:
+        raise ValueError(
+            f"move_down_distance ({move_down_distance}) must be below "
+            f"move_up_distance ({move_up_distance})."
+        )
+    asset: Articulation = env.scene[asset_cfg.name]
+    terrain: TerrainImporter = env.scene.terrain
+    if env.common_step_counter == 0:
+        return torch.mean(terrain.terrain_levels.float())
+
+    progress = asset.data.root_pos_w[env_ids, 0] - env.scene.env_origins[env_ids, 0]
+    move_up = progress > move_up_distance
+    move_down = (progress < move_down_distance) & ~move_up
+    terrain.update_env_origins(env_ids, move_up, move_down)
+    return torch.mean(terrain.terrain_levels.float())
+
+
+def terrain_levels_gaps(
+    env: "ManagerBasedRLEnv",
+    env_ids: Sequence[int],
+    move_up_distance: float = 7.5,
+    move_down_distance: float = 3.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Adjust gap width from forward progress over a completed episode.
+
+    The robot starts about two metres before the first gap.  Reaching
+    ``move_up_distance`` means it crossed several gaps and promotes the
+    environment.  Failing before ``move_down_distance`` means it did not
+    reliably clear the first gap and lowers the level.
+    """
+    from isaaclab.assets import Articulation
+    from isaaclab.terrains import TerrainImporter
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    terrain: TerrainImporter = env.scene.terrain
+
+    if env.common_step_counter == 0:
+        return torch.mean(terrain.terrain_levels.float())
+
+    forward_progress = asset.data.root_pos_w[env_ids, 0] - env.scene.env_origins[env_ids, 0]
+    move_up = forward_progress > move_up_distance
+    move_down = (forward_progress < move_down_distance) & ~move_up
+    terrain.update_env_origins(env_ids, move_up, move_down)
+    return torch.mean(terrain.terrain_levels.float())
+
+
 def modify_event_parameter(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],

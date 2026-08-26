@@ -625,7 +625,8 @@ class TerminationsCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP"""
 
-    pass
+    # Concrete terrain tasks opt in by replacing this with a CurriculumTermCfg.
+    terrain_levels = None
 
 
 ########################

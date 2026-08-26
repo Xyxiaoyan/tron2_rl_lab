@@ -42,8 +42,10 @@ def make_stairs_track(difficulty: float, cfg: "StairsTrackCfg"):
     x += _blend(rng, *cfg.start_flat_len_range, difficulty, 0.0)
 
     # --- 2. 上楼梯 ---
-    n_steps_up = int(round(_blend(rng, *cfg.n_stairs_range, difficulty, 0.6)))
-    step_h = _blend(rng, *cfg.step_height_range, difficulty, 0.4)
+    # Strong difficulty weighting keeps the first curriculum rows genuinely
+    # easy while still increasing smoothly across all ten rows.
+    n_steps_up = int(round(_blend(rng, *cfg.n_stairs_range, difficulty, 0.8)))
+    step_h = _blend(rng, *cfg.step_height_range, difficulty, 0.8)
     step_run = _blend(rng, *cfg.step_run_range, difficulty, 0.0)
     for i in range(n_steps_up):
         top_z = (i + 1) * step_h
@@ -131,7 +133,7 @@ def make_stairs_training_terrain_cfg(
             curriculum=True,
             sub_terrains={"track": track},
         ),
-        max_init_terrain_level=9,
+        max_init_terrain_level=1,
         collision_group=-1,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",

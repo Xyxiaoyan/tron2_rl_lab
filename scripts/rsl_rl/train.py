@@ -28,6 +28,14 @@ parser.add_argument("--save_interval", type=int, default=None, help="The number 
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--checkpoint_path", type=str, default=None, help="Relative path to checkpoint file.")
+parser.add_argument(
+    "--imitation_replay",
+    type=str,
+    default=None,
+    help="Balanced teacher replay produced by distill.py; keeps specialist skills during Camp PPO.",
+)
+parser.add_argument("--imitation_coef", type=float, default=0.1)
+parser.add_argument("--imitation_batch_size", type=int, default=2048)
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -145,6 +153,13 @@ def main():
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
+
+    if args_cli.imitation_replay is not None:
+        runner.load_imitation_replay(
+            os.path.abspath(args_cli.imitation_replay),
+            coefficient=args_cli.imitation_coef,
+            batch_size=args_cli.imitation_batch_size,
+        )
 
     # set seed of the environment
     env.seed(agent_cfg.seed)

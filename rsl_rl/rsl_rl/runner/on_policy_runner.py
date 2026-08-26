@@ -291,6 +291,8 @@ class OnPolicyRunner:
         self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
         self.writer.add_scalar("Policy/mean_noise_std", mean_std.item(), locs["it"])
         self.writer.add_scalar("Policy/mean_kl", locs["mean_kl"], locs["it"])
+        if self.alg.imitation_replay is not None:
+            self.writer.add_scalar("Loss/imitation", self.alg.last_imitation_loss, locs["it"])
         self.writer.add_scalar("Perf/total_fps", fps, locs["it"])
         self.writer.add_scalar(
             "Perf/collection time", locs["collection_time"], locs["it"]
@@ -403,6 +405,27 @@ class OnPolicyRunner:
                 
         self.current_learning_iteration = loaded_dict["iter"]
         return loaded_dict["infos"]
+
+    def load_imitation_replay(self, path, coefficient=0.1, batch_size=2048):
+        """Load the balanced teacher replay produced by ``distill.py``."""
+        replay = torch.load(path, map_location="cpu")
+        # Validate observation interfaces before entering the long PPO loop.
+        expected = {
+            "obs": self.num_obs,
+            "history": self.num_obs_history,
+            "commands": self.num_commands,
+            "actions": self.env.num_actions,
+        }
+        mismatched = {}
+        for key, dimension in expected.items():
+            if key not in replay:
+                mismatched[key] = ("missing", dimension)
+            elif replay[key].ndim != 2 or replay[key].shape[1] != dimension:
+                actual = tuple(replay[key].shape)
+                mismatched[key] = (actual, dimension)
+        if mismatched:
+            raise RuntimeError(f"Imitation replay is incompatible with the current Camp task: {mismatched}")
+        self.alg.set_imitation_replay(replay, coefficient=coefficient, batch_size=batch_size)
 
     def get_inference_policy(self, device=None):
         self.alg.actor_critic.eval()  # switch to evaluation mode (dropout for example)

@@ -30,6 +30,24 @@ def lateral_position_in_corridor(
     return (asset.data.root_pos_w[:, 1] - env.scene.env_origins[:, 1]).unsqueeze(1)
 
 
+def terrain_skill_id(env: ManagerBasedEnv) -> torch.Tensor:
+    """Return the training-only teacher id assigned to each terrain cell.
+
+    The label is deliberately exposed as a separate observation group by the
+    multi-teacher environment.  It must not be concatenated into ``policy``:
+    the deployed student has to infer the contact strategy from its height scan.
+    """
+    terrain = env.scene.terrain
+    generator = getattr(terrain, "terrain_generator", None)
+    skill_grid = getattr(generator, "terrain_skill_ids_tensor", None)
+    terrain_levels = getattr(terrain, "terrain_levels", None)
+    terrain_types = getattr(terrain, "terrain_types", None)
+    if skill_grid is None or terrain_levels is None or terrain_types is None:
+        return torch.full((env.num_envs, 1), -1.0, device=env.device)
+    skill_ids = skill_grid[terrain_levels, terrain_types]
+    return skill_ids.to(dtype=torch.float32).unsqueeze(-1)
+
+
 def robot_joint_acc(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """joint acc of the robot"""
     asset: Articulation = env.scene[asset_cfg.name]

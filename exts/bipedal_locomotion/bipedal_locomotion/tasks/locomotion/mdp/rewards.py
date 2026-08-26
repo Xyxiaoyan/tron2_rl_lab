@@ -28,13 +28,15 @@ def normalize_angle(x):
 
 def forward_progress(
     env: ManagerBasedRLEnv,
+    heading_target: float | None = None,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """奖励机器人沿赛道方向（世界 x 轴）的位移增量。
 
     每步计算当前 x 位置与上一步 x 位置之差（= 位移增量）。
     这等价于速度 × dt，但直接基于位置变化，无法通过原地踏步欺骗。
-    正增量（前进）给奖励，零/负增量（原地/后退）给惩罚。
+    正增量（前进）给奖励，零/负增量（原地/后退）给惩罚。如果指定 ``heading_target``，
+    正向奖励会乘以机身朝向与目标朝向的一致性，防止侧着身体刷前进奖励。
 
     自动检测 reset（位置突变 > 1m）并重置缓存，避免跨 episode 的错误增量。
     """
@@ -55,13 +57,38 @@ def forward_progress(
     delta_x = pos_x - env._prev_pos_x
     env._prev_pos_x = pos_x.clone()
 
-    # 正增量给奖励，原地/后退给惩罚（放大让站着不动惩罚更高）
+    positive_progress = torch.clamp(delta_x * 50.0, max=1.5)
+    if heading_target is not None:
+        # cos(yaw error) 在正对赛道时为 1，侧向或背对赛道时为 0。
+        _, _, base_yaw = math_utils.euler_xyz_from_quat(asset.data.root_quat_w)
+        yaw_error = normalize_angle(base_yaw - heading_target)
+        heading_scale = torch.clamp(torch.cos(yaw_error), min=0.0)
+        positive_progress = positive_progress * heading_scale
+
+    # 正增量给奖励，原地/后退继续给完整惩罚。
     reward = torch.where(
         delta_x > 0.0,
-        torch.clamp(delta_x * 50.0, max=1.5),     # 前进：放大增量（dt=0.02，×50 ≈ 速度）
+        positive_progress,                        # 前进：放大增量（dt=0.02，×50 ≈ 速度）
         torch.clamp(delta_x * 150.0, min=-0.5),   # 原地/后退：放大惩罚（比之前更狠）
     )
     return reward
+
+
+def heading_alignment_exp(
+    env: ManagerBasedRLEnv,
+    std: float,
+    target_heading: float = 0.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """奖励机身 yaw 朝向跟踪固定的世界坐标系朝向。
+
+    用于楼梯等行进方向固定的地形；与朝向加权的前进奖励配合，
+    避免策略以侧身姿态沿赛道移动。
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    _, _, base_yaw = math_utils.euler_xyz_from_quat(asset.data.root_quat_w)
+    yaw_error = normalize_angle(base_yaw - target_heading)
+    return torch.exp(-torch.square(yaw_error) / std**2)
 
 
 def corridor_penalty(
@@ -358,6 +385,65 @@ def support_foot_adaptive_height(
     return torch.nan_to_num(reward, nan=0.0)
 
 
+def highest_support_foot_height(
+    env: ManagerBasedRLEnv,
+    std: float,
+    stand_height: float = 0.60,
+    foot_radius: float = 0.074,
+    contact_threshold: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    foot_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="ankle_pitch_.*"),
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces", body_names="ankle_pitch_.*"),
+) -> torch.Tensor:
+    """Reward base height above the highest supporting foot.
+
+    This gap-specific variant prevents a foot hanging into a gap from lowering
+    the base-height target.  If neither foot is in contact, the higher foot is
+    used as a conservative fallback instead of legitimizing a crouch around the
+    lower foot.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    feet_ground_z = asset.data.body_pos_w[:, foot_cfg.body_ids, 2] - foot_radius
+    contact_forces = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids]
+    max_contact_force = torch.norm(contact_forces, dim=-1).max(dim=1)[0]
+    contacts = max_contact_force > contact_threshold
+
+    negative_inf = torch.full_like(feet_ground_z, -torch.inf)
+    contacted_heights = torch.where(contacts, feet_ground_z, negative_inf)
+    highest_contact = torch.max(contacted_heights, dim=1)[0]
+    highest_foot = torch.max(feet_ground_z, dim=1)[0]
+    has_contact = torch.any(contacts, dim=1)
+    support_ground_z = torch.where(has_contact, highest_contact, highest_foot)
+
+    target_height = support_ground_z + stand_height
+    height_error = torch.square(asset.data.root_pos_w[:, 2] - target_height)
+    reward = torch.exp(-height_error / std**2)
+    return torch.nan_to_num(reward, nan=0.0)
+
+
+def forward_stagnation(
+    env: ManagerBasedRLEnv,
+    min_forward_speed: float,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Return a penalty magnitude when commanded forward motion stalls.
+
+    The term is zero once world-x speed reaches ``min_forward_speed`` and rises
+    linearly to one at zero or backward speed.  It is intended for fixed +x
+    tracks and should be configured with a negative reward weight.
+    """
+    if min_forward_speed <= 0.0:
+        raise ValueError(f"Expected min_forward_speed > 0, got {min_forward_speed}.")
+    asset: RigidObject = env.scene[asset_cfg.name]
+    forward_speed = asset.data.root_lin_vel_w[:, 0]
+    penalty = torch.clamp((min_forward_speed - forward_speed) / min_forward_speed, min=0.0, max=1.0)
+    moving_command = env.command_manager.get_command(command_name)[:, 0] > 0.1
+    return penalty * moving_command.to(penalty.dtype)
+
+
 def stand_still(
     env,
     lin_threshold: float = 0.05,
@@ -582,6 +668,106 @@ def feet_air_time_positive_biped(
     no_gait_env_ids = is_standing_env.nonzero(as_tuple=False).flatten()
     reward[no_gait_env_ids] = 0.0
     return reward
+
+
+def touchdown_forward_step_length(
+    env: ManagerBasedRLEnv,
+    target_length: float,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Reward a forward separation between the landing foot and the support foot.
+
+    The reward is evaluated only on the first frame of a foot contact.  A landing
+    ``target_length`` metres ahead of the other foot receives one; shorter steps
+    receive a proportional reward and backward landings receive a penalty.  Using
+    the robot yaw frame makes the term independent of its world position.
+    """
+    if target_length <= 0.0:
+        raise ValueError(f"Expected target_length > 0, got {target_length}.")
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    feet_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    base_pos_w = asset.data.root_pos_w[:, :3].unsqueeze(1)
+    base_yaw = math_utils.yaw_quat(asset.data.root_quat_w)
+    feet_pos_b = math_utils.quat_apply_inverse(
+        base_yaw.unsqueeze(1).expand(-1, feet_pos_w.shape[1], -1).reshape(-1, 4),
+        (feet_pos_w - base_pos_w).reshape(-1, 3),
+    ).reshape(feet_pos_w.shape)
+
+    # This term is defined for a biped: the opposite foot is the current support
+    # reference when a new foot touches down.
+    if feet_pos_b.shape[1] != 2:
+        raise ValueError(
+            f"touchdown_forward_step_length expects exactly two feet, got {feet_pos_b.shape[1]}."
+        )
+    feet_x = feet_pos_b[:, :, 0]
+    forward_separation = feet_x - torch.flip(feet_x, dims=[1])
+    step_score = torch.clamp(forward_separation / target_length, min=-1.0, max=1.0)
+    reward = torch.sum(first_contact.to(step_score.dtype) * step_score, dim=1)
+
+    # Do not encourage stepping when the commanded longitudinal velocity is zero.
+    moving_forward = env.command_manager.get_command(command_name)[:, 0] > 0.1
+    return reward * moving_forward.to(reward.dtype)
+
+
+def swing_foot_forward_tracking(
+    env: ManagerBasedRLEnv,
+    target_length: float,
+    std: float,
+    command_name: str,
+    gait_command_name: str,
+    asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Track a front-to-back foot-separation trajectory throughout swing.
+
+    At lift-off the swing foot should be behind the support foot; during swing
+    its desired separation moves continuously forward and reaches
+    ``target_length`` before touchdown.  Unlike a touchdown-only term, this
+    provides dense guidance even before the policy has ever cleared a gap.
+    """
+    if target_length <= 0.0 or std <= 0.0:
+        raise ValueError(f"Expected target_length and std > 0, got {target_length=} and {std=}.")
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    feet_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    if feet_pos_w.shape[1] != 2:
+        raise ValueError(f"swing_foot_forward_tracking expects exactly two feet, got {feet_pos_w.shape[1]}.")
+
+    base_pos_w = asset.data.root_pos_w[:, :3].unsqueeze(1)
+    base_yaw = math_utils.yaw_quat(asset.data.root_quat_w)
+    feet_pos_b = math_utils.quat_apply_inverse(
+        base_yaw.unsqueeze(1).expand(-1, 2, -1).reshape(-1, 4),
+        (feet_pos_w - base_pos_w).reshape(-1, 3),
+    ).reshape(feet_pos_w.shape)
+    feet_x = feet_pos_b[:, :, 0]
+    actual_separation = feet_x - torch.flip(feet_x, dims=[1])
+
+    gait_command = env.command_manager.get_command(gait_command_name)
+    gait_phase = env.command_manager.get_term(gait_command_name).gait_indices
+    phase_offset = gait_command[:, 1]
+    contact_duration = gait_command[:, 2].unsqueeze(1).expand(-1, 2)
+    foot_phase = torch.remainder(
+        torch.stack((gait_phase, gait_phase + phase_offset), dim=1),
+        1.0,
+    )
+    swing_mask = foot_phase >= contact_duration
+    swing_progress = torch.clamp(
+        (foot_phase - contact_duration) / (1.0 - contact_duration),
+        min=0.0,
+        max=1.0,
+    )
+    desired_separation = target_length * (2.0 * swing_progress - 1.0)
+    tracking_score = torch.exp(-torch.square(actual_separation - desired_separation) / std**2)
+    swing_count = torch.sum(swing_mask.to(tracking_score.dtype), dim=1).clamp(min=1.0)
+    reward = torch.sum(tracking_score * swing_mask.to(tracking_score.dtype), dim=1) / swing_count
+
+    moving_forward = env.command_manager.get_command(command_name)[:, 0] > 0.1
+    return reward * moving_forward.to(reward.dtype)
 
 
 def joint_orientation_l1_symmetric(

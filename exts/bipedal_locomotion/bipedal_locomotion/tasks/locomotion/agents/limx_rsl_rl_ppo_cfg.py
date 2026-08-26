@@ -102,5 +102,39 @@ class SF_TRON2AStairsPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
 
 #-----------------------------------------------------------------
 @configclass
+class SF_TRON2AGapPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
+    experiment_name = "sf_tron_2a_gap"
+
+
+#-----------------------------------------------------------------
+# Unified-interface teacher policies used by multi-teacher distillation.
+@configclass
+class SF_TRON2AContinuousTeacherPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
+    experiment_name = "sf_tron_2a_teacher_continuous"
+
+
+@configclass
+class SF_TRON2AStairsTeacherPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
+    experiment_name = "sf_tron_2a_teacher_stairs"
+
+
+@configclass
+class SF_TRON2AObstacleTeacherPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
+    experiment_name = "sf_tron_2a_teacher_obstacle"
+
+
+@configclass
+class SF_TRON2AGapTeacherPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
+    experiment_name = "sf_tron_2a_teacher_gap"
+
+
+@configclass
+class SF_TRON2AMultiTeacherRunnerCfg(SF_TRON2AFlatPPORunnerCfg):
+    experiment_name = "sf_tron_2a_multi_teacher"
+    max_iterations = 5000
+
+
+#-----------------------------------------------------------------
+@configclass
 class WF_TRON2AStairsPPORunnerCfg(WF_TRON2AFlatPPORunnerCfg):
     experiment_name = "wf_tron_2a_stairs"
