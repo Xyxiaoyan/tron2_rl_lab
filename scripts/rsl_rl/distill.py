@@ -25,12 +25,42 @@ parser.add_argument("--teacher_gap", required=True)
 parser.add_argument("--student_init", default=None, help="Defaults to the continuous teacher checkpoint.")
 parser.add_argument("--resume_distillation", default=None)
 parser.add_argument("--beta_start", type=float, default=1.0)
-parser.add_argument("--beta_end", type=float, default=0.0)
+parser.add_argument("--beta_end", type=float, default=0.25)
 parser.add_argument("--updates_per_iteration", type=int, default=20)
 parser.add_argument("--distill_batch_size", type=int, default=4096)
 parser.add_argument("--replay_capacity_per_skill", type=int, default=25000)
-parser.add_argument("--distill_learning_rate", type=float, default=3.0e-4)
+parser.add_argument("--distill_learning_rate", type=float, default=1.0e-4)
 parser.add_argument("--estimation_coef", type=float, default=0.25)
+parser.add_argument(
+    "--specialist_relief_start",
+    type=float,
+    default=0.03,
+    help="Local height relief in metres where a specialist starts replacing the continuous teacher.",
+)
+parser.add_argument(
+    "--specialist_relief_full",
+    type=float,
+    default=0.10,
+    help="Local height relief in metres where the terrain specialist is used fully.",
+)
+parser.add_argument(
+    "--student_probe_fraction",
+    type=float,
+    default=0.10,
+    help="Fraction of environments always controlled by the student for stability measurement.",
+)
+parser.add_argument(
+    "--max_probe_error",
+    type=float,
+    default=0.08,
+    help="Probe Smooth-L1 threshold above which teacher control is automatically restored.",
+)
+parser.add_argument(
+    "--min_specialist_samples_for_best",
+    type=int,
+    default=1000,
+    help="Required active samples from every specialist before model_best.pt selection starts.",
+)
 parser.add_argument("--seed", type=int, default=None)
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
@@ -89,6 +119,8 @@ def main():
         replay_capacity_per_skill=args_cli.replay_capacity_per_skill,
         learning_rate=args_cli.distill_learning_rate,
         estimation_coef=args_cli.estimation_coef,
+        specialist_relief_start=args_cli.specialist_relief_start,
+        specialist_relief_full=args_cli.specialist_relief_full,
     )
     if args_cli.resume_distillation:
         runner.resume(os.path.abspath(args_cli.resume_distillation))
@@ -101,6 +133,9 @@ def main():
         beta_end=args_cli.beta_end,
         updates_per_iteration=args_cli.updates_per_iteration,
         batch_size=args_cli.distill_batch_size,
+        student_probe_fraction=args_cli.student_probe_fraction,
+        max_probe_error=args_cli.max_probe_error,
+        min_specialist_samples_for_best=args_cli.min_specialist_samples_for_best,
     )
     env.close()
 

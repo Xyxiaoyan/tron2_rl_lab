@@ -41,6 +41,22 @@ class TeacherIdObsCfg(ObsGroup):
         self.concatenate_terms = True
 
 
+@configclass
+class TerrainRouteObsCfg(ObsGroup):
+    """Unscaled height profile used only to route specialist teachers."""
+
+    height_profile = ObsTerm(
+        func=mdp.height_scan,
+        params={"sensor_cfg": SceneEntityCfg("height_scanner"), "offset": 0.8},
+        clip=(-1.0, 1.0),
+        scale=1.0,
+    )
+
+    def __post_init__(self):
+        self.enable_corruption = False
+        self.concatenate_terms = True
+
+
 def _set_unified_teacher_interface(cfg: SF_TRON2A_BaseEnvCfg) -> None:
     """Apply the exact observation, command and control contract shared by all teachers."""
     cfg.scene.env_spacing = 10.0
@@ -283,3 +299,4 @@ class SF_TRON2A_MultiTeacherEnvCfg(SF_TRON2A_BaseEnvCfg):
         self.scene.terrain.max_init_terrain_level = 9
         self.curriculum.terrain_levels = None
         self.observations.teacher = TeacherIdObsCfg()
+        self.observations.terrain_route = TerrainRouteObsCfg()

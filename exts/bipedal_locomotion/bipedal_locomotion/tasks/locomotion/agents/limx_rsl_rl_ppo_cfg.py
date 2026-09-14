@@ -90,6 +90,47 @@ class SF_TRON2ACampPPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
 
 #-----------------------------------------------------------------
 @configclass
+class SF_TRON2ACampDistillFineTunePPORunnerCfg(SF_TRON2AFlatPPORunnerCfg):
+    """Low-drift PPO settings for adapting a distilled policy to Camp."""
+
+    # This is deliberately a short, frequently checkpointed adaptation run.
+    # With 4096 environments, 24 steps already provide 98,304 samples/update.
+    num_steps_per_env = 24
+    max_iterations = 3000
+    save_interval = 100
+    experiment_name = "sf_tron_2a_camp_distill_finetune"
+
+    # Used only without a checkpoint. A resumed checkpoint restores its own
+    # learned action standard deviation.
+    policy = RslRlPpoActorCriticCfg(
+        init_noise_std=0.3,
+        actor_hidden_dims=[512, 256, 128],
+        critic_hidden_dims=[512, 256, 128],
+        activation="elu",
+    )
+
+    # Limit policy drift: the online PPO signal learns command response and
+    # terrain transitions while imitation replay preserves specialist gaits.
+    algorithm = RslRlPpoAlgorithmMlpCfg(
+        class_name="PPO",
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.10,
+        entropy_coef=0.001,
+        num_learning_epochs=3,
+        num_mini_batches=8,
+        learning_rate=1.0e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.005,
+        max_grad_norm=1.0,
+        obs_history_len=10,
+    )
+
+
+#-----------------------------------------------------------------
+@configclass
 class WF_TRON2ACampPPORunnerCfg(WF_TRON2AFlatPPORunnerCfg):
     experiment_name = "wf_tron_2a_camp"
 

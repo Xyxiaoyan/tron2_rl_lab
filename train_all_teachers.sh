@@ -169,9 +169,13 @@ echo "Multi-teacher distillation:"
 printf '%q ' "$PYTHON_BIN" scripts/rsl_rl/distill.py \
     --task Isaac-Limx-SF-TRON2A-MultiTeacher-v0 \
     --num_envs 2048 \
+    --distill_iterations 5000 \
     --teacher_continuous "$CONTINUOUS_CHECKPOINT" \
     --teacher_stairs "$STAIRS_CHECKPOINT" \
     --teacher_obstacle "$OBSTACLE_CHECKPOINT" \
     --teacher_gap "$GAP_CHECKPOINT" \
+    --beta_start 1.0 \
+    --beta_end 0.25 \
+    --distill_learning_rate 1e-4 \
     --headless
 echo

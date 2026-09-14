@@ -3,6 +3,7 @@ import gymnasium as gym
 from bipedal_locomotion.tasks.locomotion.agents.limx_rsl_rl_ppo_cfg import (
     SF_TRON2AFlatPPORunnerCfg, WF_TRON2AFlatPPORunnerCfg,
     SF_TRON2ACampPPORunnerCfg, WF_TRON2ACampPPORunnerCfg,
+    SF_TRON2ACampDistillFineTunePPORunnerCfg,
     SF_TRON2AStairsPPORunnerCfg, WF_TRON2AStairsPPORunnerCfg,
     SF_TRON2AGapPPORunnerCfg,
     SF_TRON2AContinuousTeacherPPORunnerCfg,
@@ -26,6 +27,7 @@ limx_sf_tron2a_blind_flat_runner_cfg = SF_TRON2AFlatPPORunnerCfg()
 limx_wf_tron2a_blind_flat_runner_cfg = WF_TRON2AFlatPPORunnerCfg()
 
 limx_sf_tron2a_camp_runner_cfg = SF_TRON2ACampPPORunnerCfg()
+limx_sf_tron2a_camp_distill_finetune_runner_cfg = SF_TRON2ACampDistillFineTunePPORunnerCfg()
 limx_wf_tron2a_camp_runner_cfg = WF_TRON2ACampPPORunnerCfg()
 
 limx_sf_tron2a_stairs_runner_cfg = SF_TRON2AStairsPPORunnerCfg()
@@ -89,6 +91,26 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": limx_solefoot_tron2a_env_cfg.SF_TRON2A_CampEnvCfg_PLAY,
         "rsl_rl_cfg_entry_point": limx_sf_tron2a_camp_runner_cfg,
+    },
+)
+
+gym.register(
+    id="Isaac-Limx-SF-TRON2A-Camp-Distill-Finetune-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_solefoot_tron2a_env_cfg.SF_TRON2A_CampDistillFineTuneEnvCfg,
+        "rsl_rl_cfg_entry_point": limx_sf_tron2a_camp_distill_finetune_runner_cfg,
+    },
+)
+
+gym.register(
+    id="Isaac-Limx-SF-TRON2A-Camp-Distill-Finetune-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": limx_solefoot_tron2a_env_cfg.SF_TRON2A_CampDistillFineTuneEnvCfg_PLAY,
+        "rsl_rl_cfg_entry_point": limx_sf_tron2a_camp_distill_finetune_runner_cfg,
     },
 )
 

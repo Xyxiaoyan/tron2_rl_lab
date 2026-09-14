@@ -19,6 +19,33 @@ from ..storage.distillation_storage import BalancedDistillationReplay
 TEACHER_NAMES = ("continuous", "stairs", "obstacle", "gap")
 
 
+def specialist_blend_weights(
+    terrain_profile: torch.Tensor,
+    skill_ids: torch.Tensor,
+    relief_start: float,
+    relief_full: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Blend from the continuous teacher only when terrain relief is visible.
+
+    All specialist tracks contain flat lead-in segments.  Those segments are
+    indistinguishable to the deployable student, so asking four independently
+    fine-tuned teachers for four different actions creates an impossible
+    regression target.  Local scan relief provides a deployable routing signal:
+    flat observations use the continuous teacher, while visible geometry
+    smoothly activates the terrain-family specialist.
+    """
+    if terrain_profile.ndim != 2 or terrain_profile.shape[1] < 2:
+        raise ValueError(f"Expected a 2-D terrain profile with at least two rays, got {terrain_profile.shape}.")
+    if relief_start < 0.0 or relief_full <= relief_start:
+        raise ValueError(
+            f"Expected 0 <= relief_start < relief_full, got {relief_start=} and {relief_full=}.")
+    profile = torch.nan_to_num(terrain_profile, nan=0.0, posinf=1.0, neginf=-1.0)
+    relief = profile.amax(dim=1) - profile.amin(dim=1)
+    weights = torch.clamp((relief - relief_start) / (relief_full - relief_start), 0.0, 1.0)
+    weights = torch.where(skill_ids == 0, torch.zeros_like(weights), weights)
+    return weights, relief
+
+
 def _actor_state(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     return {key: value for key, value in state_dict.items() if key.startswith("actor.") or key == "logstd"}
 
@@ -85,9 +112,11 @@ class MultiTeacherRunner:
         log_dir: str,
         device: str = "cpu",
         replay_capacity_per_skill: int = 25_000,
-        learning_rate: float = 3.0e-4,
+        learning_rate: float = 1.0e-4,
         estimation_coef: float = 0.25,
         max_grad_norm: float = 1.0,
+        specialist_relief_start: float = 0.03,
+        specialist_relief_full: float = 0.10,
     ):
         self.env = env
         self.device = device
@@ -95,12 +124,18 @@ class MultiTeacherRunner:
         self.cfg = copy.deepcopy(train_cfg)
         self.estimation_coef = estimation_coef
         self.max_grad_norm = max_grad_norm
+        self.learning_rate = learning_rate
+        self.specialist_relief_start = specialist_relief_start
+        self.specialist_relief_full = specialist_relief_full
         self.num_steps_per_env = int(self.cfg["num_steps_per_env"])
         self.save_interval = int(self.cfg["save_interval"])
         self.current_iteration = 0
+        self.best_probe_error = float("inf")
+        self.online_error_ema = None
+        self.specialist_active_counts = [0] * len(TEACHER_NAMES)
 
         observation_dict = env.get_observations()
-        for key in ("policy", "obsHistory", "commands", "critic", "teacher"):
+        for key in ("policy", "obsHistory", "commands", "critic", "teacher", "terrain_route"):
             if key not in observation_dict:
                 raise KeyError(f"Multi-teacher environment is missing observation group '{key}'.")
         initial_skill_ids = observation_dict["teacher"].flatten().to(dtype=torch.long)
@@ -179,20 +214,41 @@ class MultiTeacherRunner:
         )
         if "optimizer_state_dict" in checkpoint:
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            for param_group in self.optimizer.param_groups:
+                param_group["lr"] = self.learning_rate
         self.current_iteration = int(checkpoint.get("iter", 0))
+        infos = checkpoint.get("infos", {})
+        # distill.py creates a new log directory on resume.  Select and save a
+        # fresh best checkpoint for this continuation rather than referring to
+        # a model_best.pt that only exists in the previous directory.
+        self.best_probe_error = float("inf")
+        self.online_error_ema = infos.get("online_error_ema")
+        saved_counts = infos.get("specialist_active_counts", [0] * len(TEACHER_NAMES))
+        if len(saved_counts) != len(TEACHER_NAMES):
+            raise RuntimeError(f"Invalid specialist_active_counts in checkpoint: {saved_counts}")
+        self.specialist_active_counts = [int(value) for value in saved_counts]
         print(f"[INFO] Resumed distillation at iteration {self.current_iteration}")
 
-    def _teacher_actions(self, obs, history, commands, skill_ids):
-        actions = torch.empty(obs.shape[0], self.action_dim, device=self.device)
-        for skill_id, teacher in enumerate(self.teachers):
+    def _teacher_actions(self, obs, history, commands, skill_ids, terrain_profile):
+        continuous_actions = self.teachers[0].action(obs, history, commands)
+        actions = continuous_actions.clone()
+        blend_weights, relief = specialist_blend_weights(
+            terrain_profile,
+            skill_ids,
+            self.specialist_relief_start,
+            self.specialist_relief_full,
+        )
+        for skill_id, teacher in enumerate(self.teachers[1:], start=1):
             mask = skill_ids == skill_id
             if mask.any():
-                actions[mask] = teacher.action(obs[mask], history[mask], commands[mask])
+                specialist_actions = teacher.action(obs[mask], history[mask], commands[mask])
+                weight = blend_weights[mask].unsqueeze(1)
+                actions[mask] = torch.lerp(continuous_actions[mask], specialist_actions, weight)
         invalid = (skill_ids < 0) | (skill_ids >= len(self.teachers))
         if invalid.any():
             values = torch.unique(skill_ids[invalid]).tolist()
             raise RuntimeError(f"Invalid terrain teacher ids returned by environment: {values}")
-        return actions
+        return actions, blend_weights, relief
 
     def _student_actions(self, obs, history, commands):
         # Use forward rather than encode so behavior cloning can train the
@@ -236,14 +292,23 @@ class MultiTeacherRunner:
         self,
         num_iterations: int,
         beta_start: float = 1.0,
-        beta_end: float = 0.0,
+        beta_end: float = 0.25,
         updates_per_iteration: int = 20,
         batch_size: int = 4096,
+        student_probe_fraction: float = 0.10,
+        max_probe_error: float = 0.08,
+        min_specialist_samples_for_best: int = 1_000,
     ) -> None:
         if not 0.0 <= beta_end <= beta_start <= 1.0:
             raise ValueError("Expected 0 <= beta_end <= beta_start <= 1.")
         if num_iterations <= 0 or updates_per_iteration <= 0 or batch_size <= 0:
             raise ValueError("num_iterations, updates_per_iteration and batch_size must be positive.")
+        if not 0.0 < student_probe_fraction < 1.0:
+            raise ValueError("student_probe_fraction must be between zero and one.")
+        if max_probe_error <= 0.0:
+            raise ValueError("max_probe_error must be positive.")
+        if min_specialist_samples_for_best <= 0:
+            raise ValueError("min_specialist_samples_for_best must be positive.")
         observations = self.env.get_observations()
         start_iteration = self.current_iteration
         final_iteration = start_iteration + num_iterations
@@ -251,12 +316,31 @@ class MultiTeacherRunner:
         for iteration in range(start_iteration, final_iteration):
             started = time.time()
             fraction = (iteration - start_iteration) / max(1, num_iterations - 1)
-            beta = beta_start + fraction * (beta_end - beta_start)
+            scheduled_beta = beta_start + fraction * (beta_end - beta_start)
+            beta = scheduled_beta
+            # If student-only probe environments become unstable, temporarily
+            # restore more teacher control instead of continuing the collapse.
+            if self.online_error_ema is not None and self.online_error_ema > max_probe_error:
+                recovery_beta = beta_end + (self.online_error_ema - max_probe_error) / (2.0 * max_probe_error)
+                beta = max(beta, min(1.0, recovery_beta))
             # Keep one controller for a rollout (and resample on episode reset)
             # rather than blending joint targets at every control step.
             teacher_control = torch.rand(self.env.num_envs, device=self.device) < beta
+            student_probe = torch.rand(self.env.num_envs, device=self.device) < student_probe_fraction
+            rollout_skill_ids = observations["teacher"].flatten().to(self.device, dtype=torch.long)
+            for skill_id in range(len(self.teachers)):
+                candidates = torch.nonzero(rollout_skill_ids == skill_id, as_tuple=False).flatten()
+                if candidates.numel() and not student_probe[candidates].any():
+                    student_probe[candidates[0]] = True
+            # Always retain student-controlled rollouts.  They measure actual
+            # deployment error even while the safeguard raises teacher control.
+            teacher_control[student_probe] = False
             teacher_fraction_sum = 0.0
             action_error_sum = 0.0
+            probe_error_sum = 0.0
+            probe_error_steps = 0
+            specialist_weight_sum = 0.0
+            relief_sum = 0.0
 
             for _ in range(self.num_steps_per_env):
                 obs = observations["policy"].to(self.device)
@@ -264,45 +348,88 @@ class MultiTeacherRunner:
                 commands = observations["commands"].to(self.device)
                 critic = observations["critic"].to(self.device)
                 skill_ids = observations["teacher"].flatten().to(self.device, dtype=torch.long)
+                terrain_profile = observations["terrain_route"].to(self.device)
 
                 with torch.inference_mode():
-                    teacher_actions = self._teacher_actions(obs, history, commands, skill_ids)
+                    teacher_actions, specialist_weights, relief = self._teacher_actions(
+                        obs,
+                        history,
+                        commands,
+                        skill_ids,
+                        terrain_profile,
+                    )
                     student_actions, _ = self._student_actions(obs, history, commands)
                 self.replay.add(obs, history, commands, teacher_actions, critic[:, :3], skill_ids)
                 executed = torch.where(teacher_control.unsqueeze(1), teacher_actions, student_actions)
-                executed = torch.clamp(executed, -1.0, 1.0)
                 observations, _, dones, _ = self.env.step(executed)
 
                 done_mask = dones.flatten().to(device=self.device, dtype=torch.bool)
                 if done_mask.any():
                     num_done = int(done_mask.sum().item())
                     teacher_control[done_mask] = torch.rand(num_done, device=self.device) < beta
+                    teacher_control[done_mask & student_probe] = False
+                per_env_error = F.smooth_l1_loss(student_actions, teacher_actions, reduction="none").mean(dim=1)
                 teacher_fraction_sum += float(teacher_control.float().mean().item())
-                action_error_sum += float(F.smooth_l1_loss(student_actions, teacher_actions).item())
+                action_error_sum += float(per_env_error.mean().item())
+                if student_probe.any():
+                    probe_error_sum += float(per_env_error[student_probe].mean().item())
+                    probe_error_steps += 1
+                specialist_weight_sum += float(specialist_weights.mean().item())
+                relief_sum += float(relief.mean().item())
+                for skill_id in range(1, len(self.teachers)):
+                    active = (skill_ids == skill_id) & (specialist_weights >= 0.5)
+                    self.specialist_active_counts[skill_id] += int(active.sum().item())
 
             mean_bc, mean_estimation = self._update(batch_size, updates_per_iteration)
             elapsed = time.time() - started
             teacher_fraction = teacher_fraction_sum / self.num_steps_per_env
             action_error = action_error_sum / self.num_steps_per_env
+            probe_error = probe_error_sum / max(1, probe_error_steps)
+            specialist_weight = specialist_weight_sum / self.num_steps_per_env
+            mean_relief = relief_sum / self.num_steps_per_env
+            if self.online_error_ema is None:
+                self.online_error_ema = probe_error
+            else:
+                self.online_error_ema = 0.95 * self.online_error_ema + 0.05 * probe_error
             self.current_iteration = iteration + 1
 
             self.writer.add_scalar("Distillation/bc_loss", mean_bc, iteration)
             self.writer.add_scalar("Distillation/online_action_error", action_error, iteration)
+            self.writer.add_scalar("Distillation/student_probe_error", probe_error, iteration)
+            self.writer.add_scalar("Distillation/student_probe_error_ema", self.online_error_ema, iteration)
             self.writer.add_scalar("Distillation/velocity_estimation", mean_estimation, iteration)
             self.writer.add_scalar("DAgger/beta", beta, iteration)
+            self.writer.add_scalar("DAgger/scheduled_beta", scheduled_beta, iteration)
             self.writer.add_scalar("DAgger/teacher_control_fraction", teacher_fraction, iteration)
+            self.writer.add_scalar("Routing/specialist_weight", specialist_weight, iteration)
+            self.writer.add_scalar("Routing/mean_relief", mean_relief, iteration)
             self.writer.add_scalar("Replay/size", self.replay.total_size, iteration)
             self.writer.add_scalar("Perf/iteration_seconds", elapsed, iteration)
             print(
                 f"[distill {iteration:05d}] bc={mean_bc:.5f} online={action_error:.5f} "
-                f"vel={mean_estimation:.5f} beta={beta:.3f} teacher={teacher_fraction:.3f} "
+                f"probe={probe_error:.5f}/{self.online_error_ema:.5f} vel={mean_estimation:.5f} "
+                f"beta={beta:.3f} teacher={teacher_fraction:.3f} specialist={specialist_weight:.3f} "
                 f"replay={self.replay.total_size} time={elapsed:.2f}s"
             )
+            specialist_coverage_ready = all(
+                count >= min_specialist_samples_for_best for count in self.specialist_active_counts[1:]
+            )
+            self.writer.add_scalar("Routing/specialist_coverage_ready", float(specialist_coverage_ready), iteration)
+            if specialist_coverage_ready and probe_error + 1.0e-4 < self.best_probe_error:
+                self.best_probe_error = probe_error
+                self.save(os.path.join(self.log_dir, "model_best.pt"))
             if iteration % self.save_interval == 0:
                 self.save(os.path.join(self.log_dir, f"model_{iteration}.pt"))
                 self.save_replay(os.path.join(self.log_dir, "teacher_replay.pt"))
 
         self.save(os.path.join(self.log_dir, f"model_{self.current_iteration}.pt"))
+        if self.best_probe_error == float("inf"):
+            print(
+                "[WARNING] Specialist coverage was insufficient to rank checkpoints; "
+                "saving the final student as model_best.pt."
+            )
+            self.best_probe_error = probe_error
+            self.save(os.path.join(self.log_dir, "model_best.pt"))
         self.save_replay(os.path.join(self.log_dir, "teacher_replay.pt"))
 
     def save(self, path: str) -> None:
@@ -319,6 +446,11 @@ class MultiTeacherRunner:
                     "history_dim": self.history_dim,
                     "command_dim": self.command_dim,
                     "action_dim": self.action_dim,
+                    "best_probe_error": self.best_probe_error,
+                    "online_error_ema": self.online_error_ema,
+                    "specialist_relief_start": self.specialist_relief_start,
+                    "specialist_relief_full": self.specialist_relief_full,
+                    "specialist_active_counts": self.specialist_active_counts,
                 },
             },
             path,

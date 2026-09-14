@@ -1,2 +1,3 @@
-from .commands_cfg import UniformGaitCommandCfg
+from .centerline_velocity_command import CenterlineVelocityCommand
+from .commands_cfg import CenterlineVelocityCommandCfg, UniformGaitCommandCfg
 from .gait_command import GaitCommand

@@ -20,6 +20,27 @@ from stairs_training_terrain import STAIRS_TRAINING_TERRAIN_CFG
 from gap_training_terrain import GAP_EVAL_TERRAIN_CFG, GAP_TRAINING_TERRAIN_CFG
 
 
+def _camp_centerline_command(lin_vel_x: tuple[float, float]) -> mdp.CenterlineVelocityCommandCfg:
+    """Create the Camp forward command with closed-loop centerline steering."""
+    return mdp.CenterlineVelocityCommandCfg(
+        asset_name="robot",
+        heading_command=True,
+        heading_control_stiffness=1.0,
+        rel_standing_envs=0.0,
+        rel_heading_envs=1.0,
+        debug_vis=False,
+        resampling_time_range=(10.0, 10.0),
+        lookahead_distance=2.0,
+        centerline_deadband=0.05,
+        ranges=mdp.CenterlineVelocityCommandCfg.Ranges(
+            lin_vel_x=lin_vel_x,
+            lin_vel_y=(0.0, 0.0),
+            ang_vel_z=(-1.0, 1.0),
+            heading=(0.0, 0.0),
+        ),
+    )
+
+
 ######################
 # SF_TRON2A Base Environment
 ######################
@@ -101,15 +122,24 @@ class SF_TRON2A_CampEnvCfg(SF_TRON2A_BaseEnvCfg):
         # 启用地形难度分层（row 0 最简单 -> row 9 最难）
         self.scene.terrain.terrain_generator.curriculum = True
 
-        # 随机起点：从地形 flat_patches 采样出生位置，自动获取正确 z 坐标
+        # 从地形 flat_patches 采样出生位置并朝向赛道 +X。教师只在接近
+        # +X 的朝向上训练，因此 Camp 微调也保持相同的初始分布，避免策略
+        # 在学会地形能力之前先处理大角度转向。
         self.events.reset_robot_base.func = mdp.reset_root_state_from_terrain
-        self.events.reset_robot_base.params["pose_range"] = {"yaw": (-0.5, 0.5)}  # 只控制朝向
+        self.events.reset_robot_base.params["pose_range"] = {"yaw": (-0.08, 0.08)}
+        self.events.reset_robot_base.params["velocity_range"] = {
+            "x": (0.0, 0.0),
+            "y": (0.0, 0.0),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (0.0, 0.0),
+        }
+        self.events.reset_robot_joints.params["position_range"] = (-0.15, 0.15)
 
-        # 前向偏置指令（评测要求穿越赛道，让机器人始终沿赛道前进）
-        self.commands.base_velocity.ranges.lin_vel_x = (0.5, 1.0)  # 只向前
-        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)  # 无侧向（专注前向穿越）
-        self.commands.base_velocity.ranges.heading = (0.0, 0.0)     # 固定朝前
-        self.commands.base_velocity.rel_standing_envs = 0.0
+        # 保持前向速度，同时根据相对赛道中心线的横向误差实时生成转向 command。
+        # command 维度仍是 [vx, vy, wz]，不会改变现有策略网络的输入尺寸。
+        self.commands.base_velocity = _camp_centerline_command((0.5, 1.0))
         # Camp 需同时兼顾沟壑长步和高台近距离落脚，保留更灵活的步频与抬脚高度。
         self.commands.gait_command.ranges.frequencies = (0.75, 1.00)
         self.commands.gait_command.ranges.swing_height = (0.20, 0.45)
@@ -176,23 +206,63 @@ class SF_TRON2A_CampEnvCfg(SF_TRON2A_BaseEnvCfg):
 
 
 @configclass
+class SF_TRON2A_CampDistillFineTuneEnvCfg(SF_TRON2A_CampEnvCfg):
+    """Camp adaptation task that minimizes changes to a distilled gait."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Make command following the dominant new behavior. In particular, the
+        # yaw term teaches the policy to obey CenterlineVelocityCommand instead
+        # of learning an unrelated fixed-world-heading behavior.
+        self.rewards.track_lin_vel_x_exp.weight = 4.0
+        self.rewards.track_lin_vel_y_exp.weight = 3.0
+        self.rewards.track_ang_vel_z_exp.weight = 2.0
+        self.rewards.forward_progress.weight = 1.0
+        self.rewards.keep_balance.weight = 0.2
+
+        # The distilled specialists already contain useful foot trajectories.
+        # Retain only mild gait timing/support shaping and remove terms that
+        # would push PPO to invent a new long-step gait throughout Camp.
+        self.rewards.gait_reward.weight = 0.2
+        self.rewards.feet_air_time.weight = 0.0
+        self.rewards.touchdown_step_length = None
+        self.rewards.base_projection_at_feet_midpoint.weight = 0.15
+
+
+@configclass
 class SF_TRON2A_CampEnvCfg_PLAY(SF_TRON2A_BaseEnvCfg_PLAY):
     def __post_init__(self):
         super().__post_init__()
 
-        # 接入 Camp 训练地形
+        # Play 保持固定赛道起点出生，不使用 Camp 训练环境的 flat-patch
+        # 随机采样。terrain origin 已由地形生成器设置在起始平地内。
         self.scene.terrain = TRON_CAMP_TRAINING_TERRAIN_CFG
         self.scene.env_spacing = 10.0
+        self.events.reset_robot_base.func = mdp.reset_root_state_uniform
+        self.events.reset_robot_base.params["pose_range"] = {
+            "x": (0.0, 0.0),
+            "y": (0.0, 0.0),
+            "yaw": (0.0, 0.0),
+        }
+        self.events.reset_robot_base.params["velocity_range"] = {
+            "x": (0.0, 0.0),
+            "y": (0.0, 0.0),
+            "z": (0.0, 0.0),
+            "roll": (0.0, 0.0),
+            "pitch": (0.0, 0.0),
+            "yaw": (0.0, 0.0),
+        }
+        self.events.reset_robot_joints.params["position_range"] = (-0.15, 0.15)
+        self.curriculum.terrain_levels = None
 
-        # 恒定前进速度 0.6 m/s：保持在训练分布内，兼顾沟壑与高台。
-        self.commands.base_velocity.ranges.lin_vel_x = (0.6, 0.6)
-        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.ranges.heading = (0.0, 0.0)
-        self.commands.base_velocity.rel_standing_envs = 0.0  # 所有环境都前进，不站立
+
+        # 恒定前进速度 1.0 m/s，并使用与 Camp 训练一致的中心线纠偏 command。
+        self.commands.base_velocity = _camp_centerline_command((1.0, 1.0))
         self.commands.gait_command.ranges.frequencies = (0.75, 1.00)
         self.commands.gait_command.ranges.swing_height = (0.20, 0.45)
 
-        # 配置 height_scanner（policy + critic 地形感知）
+        # 与蒸馏教师和 Camp 训练任务保持完全相同的地形观测坐标。
         self.scene.height_scanner = RayCasterCfg(
             prim_path="{ENV_REGEX_NS}/Robot/base_Link",
             offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
@@ -202,6 +272,12 @@ class SF_TRON2A_CampEnvCfg_PLAY(SF_TRON2A_BaseEnvCfg_PLAY):
             mesh_prim_paths=["/World/ground"],
         )
 
+
+@configclass
+class SF_TRON2A_CampDistillFineTuneEnvCfg_PLAY(SF_TRON2A_CampEnvCfg_PLAY):
+    """Play configuration for checkpoints produced by Camp distillation fine-tuning."""
+
+    pass
 
 ############################
 # SF_TRON2A Gap Terrain Environment
